@@ -1,0 +1,7 @@
+[package]
+name = "ColdWarTerminal"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# No dependencies to avoid linker issues in this environment
