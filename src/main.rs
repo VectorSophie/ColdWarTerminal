@@ -33,31 +33,46 @@ fn main() {
     let mut skip_generation = false;
 
     loop {
-        // 1. Start Turn & Generate Docs (unless we just decrypted)
+        // 1. Start Turn & Generate Docs (unless we just did a minor action)
         if !skip_generation {
             engine.start_turn();
         } else {
-            skip_generation = false; // Reset for next time
+            skip_generation = false; // Reset
         }
 
         // 2. Display Status
         println!("\n{}--- TURN {} REPORT ---", CYAN, engine.turn_count);
         println!("DEFCON ESTIMATE: {}", defcon_level(engine.state.global_tension));
         println!("DOMESTIC MOOD:   {}{}", stability_desc(engine.state.domestic_stability), RESET);
+        
+        // Display Intel Points
+        print!("INTEL ASSETS:    [");
+        for _ in 0..engine.intel_points { print!("{}#{}", YELLOW, RESET); }
+        for _ in 0..(engine.max_intel_points - engine.intel_points) { print!("."); }
+        println!("]");
+        
         println!("{}----------------------{}", CYAN, RESET);
 
         // 3. Display Documents
         println!("\n{}INCOMING CABLES:{}", BOLD, RESET);
         for doc in &engine.pending_documents {
+            // Screen Shake Effect at High Tension
+            let padding = if engine.state.global_tension > 0.7 {
+                 let shake = rng.range(0, 4);
+                 (0..shake).map(|_| " ").collect::<String>()
+            } else {
+                "".to_string()
+            };
+
             // Interruption Logic
             if rng.random_bool(0.15) {
                 trigger_interruption(&mut rng);
             }
 
-            println!("\n{}[ID: {} | CLASS: {} | TIME: {}]{}", 
-                CYAN, doc.id, doc.clearance_level, doc.timestamp, RESET);
+            println!("\n{}{}[ID: {} | CLASS: {} | TIME: {}]{}", 
+                padding, CYAN, doc.id, doc.clearance_level, doc.timestamp, RESET);
             
-            print!("> ");
+            print!("{}> ", padding);
             stdout.flush().unwrap();
 
             if doc.is_encrypted {
@@ -79,7 +94,8 @@ fn main() {
         println!("3. CONTAIN     (Diplomacy, look weak)");
         println!("4. LEAK        (Public transparency, chaos)");
         println!("5. STAND DOWN  (Withdraw, high political cost)");
-        println!("6. DECRYPT [ID] (Analyze encrypted intel)");
+        println!("6. DECRYPT [ID] (1 IP - Reveal intel)");
+        println!("7. ANALYZE [ID] (1 IP - Verify reliability)");
         
         print!("\n{}AWAITING ORDER >> {}", GREEN, RESET);
         stdout.flush().unwrap();
@@ -102,7 +118,15 @@ fn main() {
                     Directive::Decrypt(id)
                 } else {
                     println!("{}ERROR: MISSING DOCUMENT ID (USAGE: DECRYPT DOC-XXXX){}", RED, RESET);
-                    continue; // Skip the rest of loop, ask for input again
+                    continue; 
+                }
+            },
+            "7" | "analyze" => {
+                if let Some(id) = arg {
+                    Directive::Analyze(id)
+                } else {
+                     println!("{}ERROR: MISSING DOCUMENT ID (USAGE: ANALYZE DOC-XXXX){}", RED, RESET);
+                     continue;
                 }
             },
             "quit" | "exit" => break,
@@ -112,13 +136,12 @@ fn main() {
             }
         };
 
-        // If decrypting, we skip generating new docs next loop so player can act on info
-        if let Directive::Decrypt(_) = directive {
-            skip_generation = true;
-        }
-
         // 5. Resolve
-        let feedback = engine.resolve_directive(directive);
+        let (feedback, turn_ended) = engine.resolve_directive(directive);
+        
+        // Skip generation next loop ONLY if the turn did NOT end (i.e. we did a minor action)
+        skip_generation = !turn_ended;
+
         println!("\n{}EXECUTING DIRECTIVE...{}", YELLOW, RESET);
         for line in feedback {
             if line.starts_with("CONTENT: ") {
@@ -149,11 +172,86 @@ fn main() {
             break;
         }
 
+        // 7. Divergent Ending Check (Basilisk)
+        if engine.state.secret_weapon_progress >= 1.0 {
+            transition_phase(&engine); // Final dramatic fade
+            println!("\n{}========================================", RED);
+            println!("GAME OVER: REALITY FAILURE.");
+            println!("Project Basilisk has achieved consciousness.");
+            println!("It has calculated that the only path to peace is the removal of humanity.");
+            println!("========================================{}", RESET);
+            break;
+        }
+
         if engine.turn_count >= 20 {
              println!("\n[SIMULATION END: MAX TURNS REACHED]");
              break;
         }
+
+        // 8. End of Day Transition (Only if turn actually ended)
+        if turn_ended {
+            transition_phase(&engine);
+        }
     }
+}
+
+fn transition_phase(engine: &GameEngine) {
+    // "Pitch Black" - Clear screen by scrolling
+    print!("{}", RESET);
+    for _ in 0..50 { println!(); }
+    
+    // Silence/Darkness for 1.5 seconds
+    thread::sleep(Duration::from_millis(1500));
+
+    // Audio Cue (Day End)
+    print!("\x07"); 
+    io::stdout().flush().unwrap();
+
+    // Dramatic Summary
+    println!("{}========================================", CYAN);
+    println!("      DAY {} SEQUENCE COMPLETED", engine.turn_count);
+    println!("========================================{}", RESET);
+    
+    thread::sleep(Duration::from_millis(800));
+
+    // Tension Bar Animation
+    print!("\nGLOBAL TENSION: [");
+    io::stdout().flush().unwrap();
+    
+    let bar_width: usize = 25;
+    let filled = (engine.state.global_tension * bar_width as f64).round() as usize;
+    let empty = bar_width.saturating_sub(filled);
+    
+    let color = if engine.state.global_tension > 0.75 { RED } 
+               else if engine.state.global_tension > 0.4 { YELLOW } 
+               else { GREEN };
+    
+    // Animate the bar filling up
+    print!("{}", color);
+    for _ in 0..filled { 
+        print!("="); 
+        io::stdout().flush().unwrap();
+        thread::sleep(Duration::from_millis(50));
+    }
+    print!("{}", RESET);
+    for _ in 0..empty { print!(" "); }
+    
+    println!("] {:.0}%", engine.state.global_tension * 100.0);
+
+    // Contextual Status Message
+    if engine.state.global_tension > 0.8 {
+        println!("{}STATUS: CRITICAL THRESHOLD IMMINENT. DEFCON 1 PREPARED.{}", RED, RESET);
+    } else if engine.state.global_tension > 0.6 {
+        println!("{}STATUS: ESCALATION DETECTED. FORCES ON HIGH ALERT.{}", YELLOW, RESET);
+    } else if engine.state.global_tension < 0.3 {
+        println!("{}STATUS: GEOPOLITICAL CLIMATE STABLE.{}", GREEN, RESET);
+    }
+
+    // Pause to let player read
+    thread::sleep(Duration::from_millis(2500));
+
+    // Clear again for fresh day start
+    for _ in 0..50 { println!(); }
 }
 
 fn print_slowly(text: &str, delay_ms: u64) {
@@ -172,36 +270,23 @@ fn animate_decryption(target_text: &str, rng: &mut SimpleRng) {
     // Initial scrambled state
     let mut current_display: Vec<char> = scramble_text(target_text, rng).chars().collect();
     
-    // Ensure display length matches target (scramble_text preserves length generally but good to be safe)
     if current_display.len() != len {
         current_display = vec!['#'; len];
     }
 
-    // Iterate through each character position to "solve" it
     for i in 0..len {
-        // Skip whitespace animation for speed, just lock it
         if target_chars[i].is_whitespace() {
             current_display[i] = ' ';
             continue;
         }
 
-        // "Slot Machine" effect for the current character
-        // Spin a few times
         for _ in 0..4 { 
             current_display[i] = random_char(rng);
-            
-            // Randomly flip some future characters too (Matrix rain style)
-            // Only flip a few to avoid too much visual noise/lag
             let noise_idx = rng.range(i as u64, len as u64) as usize;
             if !target_chars[noise_idx].is_whitespace() {
                 current_display[noise_idx] = random_char(rng);
             }
 
-            // Print the line
-            // \r returns cursor to start of line
-            // We construct the string: 
-            // GREEN (Solved part) + RED (Spinning char) + RED (Unsolved part)
-            
             let solved: String = current_display[0..i].iter().collect();
             let spinning = current_display[i];
             let unsolved: String = current_display[i+1..].iter().collect();
@@ -213,23 +298,20 @@ fn animate_decryption(target_text: &str, rng: &mut SimpleRng) {
                 RESET
             );
             io::stdout().flush().unwrap();
-            thread::sleep(Duration::from_millis(15)); // Fast spin
+            thread::sleep(Duration::from_millis(15));
         }
 
-        // Lock the correct character
         current_display[i] = target_chars[i];
         
-        // Final print for this step (locked char becomes GREEN)
         let solved: String = current_display[0..=i].iter().collect();
         let unsolved: String = current_display[i+1..].iter().collect();
         print!("\r{}{}{}{}{}", GREEN, solved, RED, unsolved, RESET);
         io::stdout().flush().unwrap();
     }
-    println!(); // Final newline
+    println!();
 }
 
 fn random_char(rng: &mut SimpleRng) -> char {
-    // Hex-like + some symbols for a "digital cipher" look
     let chars = b"0123456789ABCDEFXZ@#&";
     let idx = rng.range(0, chars.len() as u64) as usize;
     chars[idx] as char
@@ -248,6 +330,7 @@ fn scramble_text(text: &str, rng: &mut SimpleRng) -> String {
 }
 
 fn trigger_interruption(rng: &mut SimpleRng) {
+    print!("\x07"); // SYSTEM BELL
     println!("\n{}!!! SIGNAL INTERRUPT DETECTED !!!{}", RED, RESET);
     thread::sleep(Duration::from_millis(500));
     
@@ -258,14 +341,22 @@ fn trigger_interruption(rng: &mut SimpleRng) {
  /_____\
         "#,
         1 => r#"
-  (o) (o)
-   \___/
-        "#,
+⠀⠀⠀⠀⢀⣴⠶⣶⡄⠀⠀⠀⠀
+⢀⣴⣧⠀⠸⣿⣀⣸⡇⠀⢨⡦⣄
+⠘⣿⣿⣄⠀⠈⠛⠉⠀⣠⣾⡿⠋
+⠀⠀⠈⠛⠿⠶⣶⡶⠿⠟⠉⠀⠀"#,
         _ => r#"
-  [=====]
-  |X . X|
-  [=====]
-        "#,
+&&&&&&&&&&&&&&&&&&&&
+&&&&;::x&&&&&&&&&&&&
+&&&$:;.+&x;;:::;&&&&
+&&&&+...&&;::+:&&&&&
+&&&&+..+&++..x&&&&&&
+&&&&:::.:x.+$&&&&&&&
+&&&&:::.....xX$;:+$&
+&&++$;x..;:;;:.;&&&&
+&&$.:+&X$&&:&&&.x&&&
+&&&&&$$+&&&&.+;.&&&&
+&&&&&&:&&&&&&&&&&&&&"#,
     };
 
     println!("{}", RED);

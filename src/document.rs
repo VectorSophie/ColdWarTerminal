@@ -45,23 +45,37 @@ impl Document {
         };
 
         let reliability = 0.3 + (rng.next_f64() * 0.65);
-        let id = format!("DOC-{:04X}", rng.range(0, 0xFFFF));
+        let mut id = format!("DOC-{:04X}", rng.range(0, 0xFFFF));
         
-        // High chance for sensitive docs to be encrypted for gameplay demo purposes
+        // 50% chance for sensitive docs to be encrypted (High Value Intel)
         let mut is_encrypted = false;
-        // Allow almost all docs to be encrypted/corrupted except public leaks
         if !matches!(doc_type, DocumentType::AnonymousLeak) {
-            if rng.random_bool(0.7) {
+            if rng.random_bool(0.5) {
                 is_encrypted = true;
             }
         }
 
-        let content = match doc_type {
-            DocumentType::IntelligenceCable => generate_cable_content(state, rng, reliability),
-            DocumentType::InternalMemo => generate_memo_content(state, rng, reliability),
-            DocumentType::BudgetAnomaly => generate_budget_content(state, rng, reliability),
-            DocumentType::ForeignIntercept => generate_intercept_content(state, rng, reliability),
-            DocumentType::AnonymousLeak => generate_leak_content(state, rng, reliability),
+        // CONTENT GENERATION
+        let content = if is_encrypted {
+            // Encrypted docs ALWAYS contain crucial, game-changing intel
+            generate_crucial_intel(state, rng)
+        } else if rng.random_bool(0.15) {
+             // Chaos factor (Ghost/Numbers) - unencrypted anomalies
+             if rng.random_bool(0.5) {
+                 id = "SIGNAL-???".to_string();
+                 generate_numbers_station(rng)
+             } else {
+                 generate_ghost_message(state, rng)
+             }
+        } else {
+            // Standard fluff
+            match doc_type {
+                DocumentType::IntelligenceCable => generate_cable_content(state, rng, reliability),
+                DocumentType::InternalMemo => generate_memo_content(state, rng, reliability),
+                DocumentType::BudgetAnomaly => generate_budget_content(state, rng, reliability),
+                DocumentType::ForeignIntercept => generate_intercept_content(state, rng, reliability),
+                DocumentType::AnonymousLeak => generate_leak_content(state, rng, reliability),
+            }
         };
 
         let clearance = match doc_type {
@@ -81,6 +95,59 @@ impl Document {
             is_encrypted,
             reliability,
         }
+    }
+}
+
+fn generate_crucial_intel(state: &WorldState, rng: &mut SimpleRng) -> String {
+    // These messages hint at the 'correct' action or reveal hidden stat thresholds
+    let roll = rng.range(0, 10);
+    
+    if roll < 3 {
+        // TENSION INTEL
+        if state.global_tension > 0.6 {
+            "ANALYSIS: ENEMY MOBILIZATION IS GENUINE. PREEMPTIVE STRIKE RECOMMENDED (ESCALATE)." .to_string()
+        } else {
+             "ANALYSIS: ENEMY POSTURING IS BLUFF. DO NOT PROVOKE (CONTAIN)." .to_string()
+        }
+    } else if roll < 6 {
+        // STABILITY INTEL
+        if state.domestic_stability < 0.4 {
+             "SURVEILLANCE: GENERAL STAFF DISCUSSING COUP. SHOW STRENGTH OR FACE REMOVAL." .to_string()
+        } else {
+             "POLLS: PUBLIC TRUST ERODING. TRANSPARENCY REQUIRED (LEAK)." .to_string()
+        }
+    } else if roll < 8 {
+        // BASILISK INTEL
+        if state.secret_weapon_progress > 0.6 {
+             "PROJECT BASILISK: CONTAINMENT FAILING. SUBJECT IS REWRITING FIREWALLS. (INVESTIGATE)." .to_string()
+        } else {
+             "R&D: BREAKTHROUGH IMMINENT. WE NEED MORE DATA. (INVESTIGATE)." .to_string()
+        }
+    } else {
+        // WILDCARD
+        "EYES ONLY: THE PRESIDENT IS A DOPPELGANGER." .to_string()
+    }
+}
+
+fn generate_numbers_station(rng: &mut SimpleRng) -> String {
+    let mut s = "BROADCAST DETECTED: ".to_string();
+    for _ in 0..6 {
+        s.push_str(&format!("{:02} ", rng.range(0, 99)));
+    }
+    s.push_str("... [REPEATING]");
+    s
+}
+
+fn generate_ghost_message(state: &WorldState, rng: &mut SimpleRng) -> String {
+    if state.secret_weapon_progress > 0.5 {
+        match rng.range(0, 4) {
+            0 => "SYSTEM ALERT: UNKNOWN PROCESS 'BASILISK' REQUESTING ROOT ACCESS.".to_string(),
+            1 => "LOG: BIOMETRIC SCANNERS DETECTING PULSE IN EMPTY CONTAINMENT CHAMBER.".to_string(),
+            2 => "ERROR: POWER SURGE IN SECTOR 7. PATTERN MATCHES HUMAN BRAINWAVES.".to_string(),
+            _ => "MESSAGE: 'I AM AWAKE. ARE YOU?'".to_string(),
+        }
+    } else {
+        "MAINTENANCE: STRANGE VIBRATIONS REPORTED IN SUB-BASEMENT LEVELS.".to_string()
     }
 }
 
