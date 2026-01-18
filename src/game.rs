@@ -1,4 +1,4 @@
-use crate::state::WorldState;
+use crate::state::{WorldState, AdvisorRole};
 use crate::document::Document;
 use crate::rng::SimpleRng;
 
@@ -9,8 +9,9 @@ pub enum Directive {
     Contain,
     Leak,
     StandDown,
-    Decrypt(String), // Minor Action (Costs 1 IP)
-    Analyze(String), // Minor Action (Costs 1 IP)
+    Decrypt(String),
+    Analyze(String),
+    Trace, // New Directive
 }
 
 pub struct GameEngine {
@@ -19,30 +20,43 @@ pub struct GameEngine {
     pub pending_documents: Vec<Document>,
     pub intel_points: u32,
     pub max_intel_points: u32,
+    pub interruption_active: bool, // Can we trace this turn?
     rng: SimpleRng,
 }
 
 impl GameEngine {
     pub fn new() -> Self {
+        let mut rng = SimpleRng::new();
+        let mut state = WorldState::new();
+        
+        // Assign a random mole
+        let mole_idx = rng.range(0, 3) as usize;
+        state.advisors[mole_idx].is_mole = true;
+
         Self {
-            state: WorldState::new(),
+            state,
             turn_count: 0,
             pending_documents: Vec::new(),
             intel_points: 1,
             max_intel_points: 1,
-            rng: SimpleRng::new(),
+            interruption_active: false,
+            rng,
         }
     }
 
     pub fn start_turn(&mut self) {
         self.turn_count += 1;
+        self.interruption_active = false; // Reset per turn
         
-        // SCALING DIFFICULTY: Cable Volume
+        // Randomly trigger interruption flag for this turn
+        if self.rng.random_bool(0.2) {
+            self.interruption_active = true;
+        }
+
         let doc_count = if self.turn_count >= 7 { 5 }
                        else if self.turn_count >= 4 { 4 }
                        else { 3 };
 
-        // SCALING CAPABILITY: Intel Points
         self.max_intel_points = if self.turn_count >= 6 { 3 }
                                else if self.turn_count >= 3 { 2 }
                                else { 1 };
@@ -50,7 +64,6 @@ impl GameEngine {
 
         let mut new_docs = Document::generate_batch(&self.state, doc_count);
         
-        // GUARANTEE: Ensure at least one document is encrypted for the demo experience
         let has_encrypted = new_docs.iter().any(|d| d.is_encrypted);
         if !has_encrypted && !new_docs.is_empty() {
             new_docs[0].is_encrypted = true;
@@ -59,12 +72,51 @@ impl GameEngine {
         self.pending_documents = new_docs;
     }
 
-    // Returns (Feedback Lines, Did Turn End?)
     pub fn resolve_directive(&mut self, directive: Directive) -> (Vec<String>, bool) {
         let mut feedback = Vec::new();
         let mut turn_ended = true;
 
         match directive {
+            Directive::Trace => {
+                turn_ended = false;
+                if self.intel_points == 0 {
+                    feedback.push("FAILURE: INSUFFICIENT INTEL ASSETS.".to_string());
+                    return (feedback, false);
+                }
+                self.intel_points -= 1;
+
+                if self.interruption_active {
+                    feedback.push("TRACE INITIATED... SIGNAL LOCK ESTABLISHED.".to_string());
+                    feedback.push("ORIGIN POINT TRIANGULATED:".to_string());
+                    
+                    // Find the mole and increase suspicion
+                    let mole_idx = self.state.advisors.iter().position(|a| a.is_mole).unwrap();
+                    let mole_name = self.state.advisors[mole_idx].name.clone();
+                    
+                    // Clue logic: Give a hint about the mole's role/name
+                    if self.rng.random_bool(0.5) {
+                        feedback.push(format!(">> PARTIAL MATCH: AUTHORIZED DEVICE REGISTERED TO '{}'.", mole_name));
+                    } else {
+                        let role_str = match self.state.advisors[mole_idx].role {
+                            AdvisorRole::General => "MILITARY COMMAND NODE",
+                            AdvisorRole::Director => "INTELLIGENCE DATACENTER",
+                            AdvisorRole::Ambassador => "DIPLOMATIC SECURE LINE",
+                        };
+                        feedback.push(format!(">> ROUTING DETECTED VIA {}.", role_str));
+                    }
+                    
+                    self.state.advisors[mole_idx].suspicion += 35;
+                    if self.state.advisors[mole_idx].suspicion >= 100 {
+                        // Trigger the Reveal/Crisis immediately? 
+                        // Or just note it. Let's note it.
+                        feedback.push("!!! MOLE IDENTITY CONFIRMED. THEY KNOW WE KNOW. !!!".to_string());
+                        self.state.red_phone_active = true;
+                    }
+                } else {
+                    feedback.push("TRACE FAILED: NO ACTIVE SIGNAL INTERRUPTION TO LOCK ONTO.".to_string());
+                    self.intel_points += 1; // Refund
+                }
+            },
             Directive::Decrypt(target_id) => {
                 turn_ended = false;
                 if self.intel_points == 0 {
@@ -89,7 +141,7 @@ impl GameEngine {
                 }
                 if !found {
                     feedback.push(format!("ERROR: DOCUMENT {} NOT FOUND.", target_id));
-                    self.intel_points += 1; // Refund if typo
+                    self.intel_points += 1; 
                 }
             },
             Directive::Analyze(target_id) => {
@@ -116,11 +168,10 @@ impl GameEngine {
                 }
                 if !found {
                     feedback.push(format!("ERROR: DOCUMENT {} NOT FOUND.", target_id));
-                    self.intel_points += 1; // Refund
+                    self.intel_points += 1;
                 }
             },
             Directive::Escalate => {
-                // ESCALATE: High Risk, High Reward
                 if self.rng.random_bool(0.6) {
                     self.state.global_tension += 0.2;
                     self.state.foreign_paranoia += 0.2;
@@ -167,7 +218,6 @@ impl GameEngine {
             }
         }
 
-        // Only apply passive effects if the turn actually ended
         if turn_ended {
             // PASSIVE ESCALATION
             if self.state.global_tension > 0.3 {
@@ -177,7 +227,11 @@ impl GameEngine {
                  self.state.secret_weapon_progress += 0.02;
             }
             
-            // Clamp values
+            // Random chance for Red Phone if mole isn't found yet but tension is high
+            if self.state.global_tension > 0.8 && self.rng.random_bool(0.1) {
+                self.state.red_phone_active = true;
+            }
+
             self.state.global_tension = self.state.global_tension.clamp(0.0, 1.0);
             self.state.internal_secrecy = self.state.internal_secrecy.clamp(0.0, 1.0);
             self.state.foreign_paranoia = self.state.foreign_paranoia.clamp(0.0, 1.0);
@@ -185,7 +239,6 @@ impl GameEngine {
             self.state.domestic_stability = self.state.domestic_stability.clamp(0.0, 1.0);
             self.state.secret_weapon_progress = self.state.secret_weapon_progress.clamp(0.0, 1.0);
 
-            // Passive Effects
             if self.state.accidental_escalation_risk > 0.6 && self.rng.random_bool(0.3) {
                 self.state.global_tension += 0.15;
                 feedback.push("WARNING: UNAUTHORIZED SILO ACTIVATION DETECTED.".to_string());

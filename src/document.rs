@@ -1,4 +1,4 @@
-use crate::state::WorldState;
+use crate::state::{WorldState, AdvisorRole};
 use crate::rng::SimpleRng;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -8,6 +8,7 @@ pub enum DocumentType {
     BudgetAnomaly,
     ForeignIntercept,
     AnonymousLeak,
+    AdvisorMessage, // New type
 }
 
 #[derive(Debug, Clone)]
@@ -18,7 +19,7 @@ pub struct Document {
     pub clearance_level: String,
     pub timestamp: String,
     pub content: String,
-    pub is_encrypted: bool,     // New field
+    pub is_encrypted: bool,
     #[allow(dead_code)]
     pub reliability: f64,
 }
@@ -36,31 +37,39 @@ impl Document {
     }
 
     fn generate_single(state: &WorldState, rng: &mut SimpleRng) -> Document {
-        let doc_type = match rng.range(0, 5) {
-            0 => DocumentType::IntelligenceCable,
-            1 => DocumentType::InternalMemo,
-            2 => DocumentType::BudgetAnomaly,
-            3 => DocumentType::ForeignIntercept,
-            _ => DocumentType::AnonymousLeak,
+        // Weighted generation: Advisor messages are relatively common
+        let roll = rng.range(0, 100);
+        let doc_type = if roll < 20 {
+            DocumentType::AdvisorMessage
+        } else if roll < 40 {
+            DocumentType::IntelligenceCable
+        } else if roll < 60 {
+            DocumentType::InternalMemo
+        } else if roll < 75 {
+            DocumentType::ForeignIntercept
+        } else if roll < 90 {
+            DocumentType::BudgetAnomaly
+        } else {
+            DocumentType::AnonymousLeak
         };
 
         let reliability = 0.3 + (rng.next_f64() * 0.65);
         let mut id = format!("DOC-{:04X}", rng.range(0, 0xFFFF));
         
-        // 50% chance for sensitive docs to be encrypted (High Value Intel)
         let mut is_encrypted = false;
-        if !matches!(doc_type, DocumentType::AnonymousLeak) {
+        // Advisor messages are never encrypted (they are "trusted")
+        // Unless it's the mole slipping up? No, keep them clear for narrative contrast.
+        if !matches!(doc_type, DocumentType::AnonymousLeak | DocumentType::AdvisorMessage) {
             if rng.random_bool(0.5) {
                 is_encrypted = true;
             }
         }
 
-        // CONTENT GENERATION
         let content = if is_encrypted {
-            // Encrypted docs ALWAYS contain crucial, game-changing intel
             generate_crucial_intel(state, rng)
+        } else if matches!(doc_type, DocumentType::AdvisorMessage) {
+            generate_advisor_content(state, rng)
         } else if rng.random_bool(0.15) {
-             // Chaos factor (Ghost/Numbers) - unencrypted anomalies
              if rng.random_bool(0.5) {
                  id = "SIGNAL-???".to_string();
                  generate_numbers_station(rng)
@@ -68,19 +77,20 @@ impl Document {
                  generate_ghost_message(state, rng)
              }
         } else {
-            // Standard fluff
             match doc_type {
                 DocumentType::IntelligenceCable => generate_cable_content(state, rng, reliability),
                 DocumentType::InternalMemo => generate_memo_content(state, rng, reliability),
                 DocumentType::BudgetAnomaly => generate_budget_content(state, rng, reliability),
                 DocumentType::ForeignIntercept => generate_intercept_content(state, rng, reliability),
                 DocumentType::AnonymousLeak => generate_leak_content(state, rng, reliability),
+                DocumentType::AdvisorMessage => generate_advisor_content(state, rng), // Fallback
             }
         };
 
         let clearance = match doc_type {
             DocumentType::BudgetAnomaly => "CONFIDENTIAL",
             DocumentType::AnonymousLeak => "UNVERIFIED",
+            DocumentType::AdvisorMessage => "EYES ONLY",
             _ => "TOP SECRET",
         };
 
@@ -98,33 +108,62 @@ impl Document {
     }
 }
 
+fn generate_advisor_content(state: &WorldState, rng: &mut SimpleRng) -> String {
+    // Pick a random advisor
+    let advisor_idx = rng.range(0, state.advisors.len() as u64) as usize;
+    let advisor = &state.advisors[advisor_idx];
+    
+    let prefix = format!("FROM: {}", advisor.name);
+    
+    let msg = match advisor.role {
+        AdvisorRole::General => {
+            if state.global_tension > 0.6 {
+                "The enemy understands only strength. We must demonstrate capacity."
+            } else {
+                "Our readiness is slipping. We should run a 'drill' near the border."
+            }
+        },
+        AdvisorRole::Director => {
+            if state.internal_secrecy < 0.4 {
+                "Too many eyes on us. We need to go dark to make progress."
+            } else {
+                "The data streams are noisy. I recommend a deeper audit of the intercepts."
+            }
+        },
+        AdvisorRole::Ambassador => {
+            if state.foreign_paranoia > 0.6 {
+                "They are terrified. One wrong move and they launch. We must talk."
+            } else {
+                "We can buy time with concessions. It's cheaper than war."
+            }
+        }
+    };
+
+    format!("{} // \"{}\"", prefix, msg)
+}
+
 fn generate_crucial_intel(state: &WorldState, rng: &mut SimpleRng) -> String {
-    // These messages hint at the 'correct' action or reveal hidden stat thresholds
     let roll = rng.range(0, 10);
     
     if roll < 3 {
-        // TENSION INTEL
         if state.global_tension > 0.6 {
             "ANALYSIS: ENEMY MOBILIZATION IS GENUINE. PREEMPTIVE STRIKE RECOMMENDED (ESCALATE)." .to_string()
         } else {
              "ANALYSIS: ENEMY POSTURING IS BLUFF. DO NOT PROVOKE (CONTAIN)." .to_string()
         }
     } else if roll < 6 {
-        // STABILITY INTEL
         if state.domestic_stability < 0.4 {
              "SURVEILLANCE: GENERAL STAFF DISCUSSING COUP. SHOW STRENGTH OR FACE REMOVAL." .to_string()
         } else {
              "POLLS: PUBLIC TRUST ERODING. TRANSPARENCY REQUIRED (LEAK)." .to_string()
         }
     } else if roll < 8 {
-        // BASILISK INTEL
         if state.secret_weapon_progress > 0.6 {
              "PROJECT BASILISK: CONTAINMENT FAILING. SUBJECT IS REWRITING FIREWALLS. (INVESTIGATE)." .to_string()
         } else {
              "R&D: BREAKTHROUGH IMMINENT. WE NEED MORE DATA. (INVESTIGATE)." .to_string()
         }
     } else {
-        // WILDCARD
         "EYES ONLY: THE PRESIDENT IS A DOPPELGANGER." .to_string()
     }
 }
