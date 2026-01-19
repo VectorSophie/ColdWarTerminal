@@ -30,10 +30,12 @@ impl SimpleRng {
     }
 
     pub fn range(&mut self, min: u64, max: u64) -> u64 {
-        if min >= max { return min; }
+        if min >= max {
+            return min;
+        }
         min + (self.next_u64() % (max - min))
     }
-    
+
     pub fn random_bool(&mut self, probability: f64) -> bool {
         self.next_f64() < probability
     }
