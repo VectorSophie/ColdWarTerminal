@@ -11,7 +11,8 @@ pub enum Directive {
     StandDown,
     Decrypt(String),
     Analyze(String),
-    Trace, // New Directive
+    Trace,
+    Consult(String), // New Directive
 }
 
 pub struct GameEngine {
@@ -20,7 +21,8 @@ pub struct GameEngine {
     pub pending_documents: Vec<Document>,
     pub intel_points: u32,
     pub max_intel_points: u32,
-    pub interruption_active: bool, // Can we trace this turn?
+    pub interruption_active: bool,
+    pub consult_count: u32, // Track consults per turn
     rng: SimpleRng,
 }
 
@@ -40,13 +42,15 @@ impl GameEngine {
             intel_points: 1,
             max_intel_points: 1,
             interruption_active: false,
+            consult_count: 0,
             rng,
         }
     }
 
     pub fn start_turn(&mut self) {
         self.turn_count += 1;
-        self.interruption_active = false; // Reset per turn
+        self.interruption_active = false;
+        self.consult_count = 0; // Reset consults
 
         // SCALING INTERRUPTION DIFFICULTY
         // Turn 1-2: 0%, Turn 3-5: 15%, Turn 6-10: 30%, Turn 11+: 50%
@@ -141,6 +145,135 @@ impl GameEngine {
                         "TRACE FAILED: NO ACTIVE SIGNAL INTERRUPTION TO LOCK ONTO.".to_string(),
                     );
                     self.intel_points += 1; // Refund
+                }
+            }
+            Directive::Consult(target) => {
+                turn_ended = false;
+
+                // Cost Logic: First one is free, subsequent cost 1 Intel
+                if self.consult_count > 0 {
+                    if self.intel_points == 0 {
+                        feedback.push(
+                            "FAILURE: INSUFFICIENT INTEL ASSETS FOR ADDITIONAL CONSULTATION."
+                                .to_string(),
+                        );
+                        return (feedback, false);
+                    }
+                    self.intel_points -= 1;
+                }
+                self.consult_count += 1;
+
+                // Find Advisor
+                let target_lower = target.to_lowercase();
+                let advisor = self.state.advisors.iter().find(|a| {
+                    a.name.to_lowercase().contains(&target_lower)
+                        || format!("{:?}", a.role)
+                            .to_lowercase()
+                            .contains(&target_lower)
+                });
+
+                if let Some(adv) = advisor {
+                    let cost_msg = if self.consult_count > 1 {
+                        "(INTEL COST: 1)"
+                    } else {
+                        "(STANDARD PROTOCOL)"
+                    };
+                    feedback.push(format!(
+                        "CONSULTING WITH {}... {}",
+                        adv.name.to_uppercase(),
+                        cost_msg
+                    ));
+
+                    let advice = if adv.is_mole {
+                        // Mole Logic: Mislead
+                        match adv.role {
+                            AdvisorRole::General => {
+                                if self.state.global_tension > 0.7 {
+                                    // Mole wants war: push for escalation when dangerous
+                                    "We have the advantage! Strike now before they mobilize further! (Recommend: ESCALATE)".to_string()
+                                } else {
+                                    // Mole wants weakness: stand down when you should be alert
+                                    "Intelligence is flawed. They are just exercises. We should pull back. (Recommend: STAND DOWN)".to_string()
+                                }
+                            }
+                            AdvisorRole::Director => {
+                                // Mole wants chaos/exposure
+                                if self.state.internal_secrecy < 0.4 {
+                                    "The leaks are useful. They confuse the enemy. Let them flow. (Recommend: LEAK)".to_string()
+                                } else {
+                                    "Our own agents are the problem. Purge the departments. (Recommend: INVESTIGATE)".to_string()
+                                }
+                            }
+                            AdvisorRole::Ambassador => {
+                                // Mole wants capitulation or mixed signals
+                                if self.state.foreign_paranoia > 0.6 {
+                                    "They are bluffing. Ignore their threats. (Recommend: CONTAIN)"
+                                        .to_string()
+                                } else {
+                                    "We should apologize for the border incident immediately. (Recommend: STAND DOWN)".to_string()
+                                }
+                            }
+                        }
+                    } else {
+                        // Loyal Logic: Sound advice
+                        match adv.role {
+                            AdvisorRole::General => {
+                                if self.state.global_tension > 0.8 {
+                                    "Situation Critical. We must show resolve but avoid a first strike. (Recommend: CONTAIN)".to_string()
+                                } else if self.state.foreign_paranoia > 0.7 {
+                                    "They are scared. Reducing readiness might calm them. (Recommend: STAND DOWN)".to_string()
+                                } else {
+                                    "We should test their response times. (Recommend: INVESTIGATE)"
+                                        .to_string()
+                                }
+                            }
+                            AdvisorRole::Director => {
+                                if self.state.secret_weapon_progress > 0.7 {
+                                    "The Project is becoming unstable. We need to secure the facility. (Recommend: INVESTIGATE)".to_string()
+                                } else if self.state.internal_secrecy < 0.5 {
+                                    "Too many leaks. We need to plug the holes. (Recommend: INVESTIGATE)".to_string()
+                                } else {
+                                    "We can use the confusion to our advantage. (Recommend: LEAK)"
+                                        .to_string()
+                                }
+                            }
+                            AdvisorRole::Ambassador => {
+                                if self.state.global_tension > 0.6 {
+                                    "We need a backchannel. I can arrange a meeting. (Recommend: CONTAIN)".to_string()
+                                } else if self.state.domestic_stability < 0.4 {
+                                    "The people need to know we are working for peace. (Recommend: LEAK)".to_string()
+                                } else {
+                                    "Maintain current diplomatic pressure. (Recommend: WAIT)"
+                                        .to_string()
+                                }
+                            }
+                        }
+                    };
+
+                    feedback.push(format!("\"{}\"", advice));
+                } else {
+                    feedback.push(format!("ERROR: ADVISOR '{}' NOT FOUND.", target));
+                    // Refund if it cost anything (though we deducted already, so let's refund)
+                    if self.consult_count > 0 && self.intel_points < self.max_intel_points {
+                        // Only refund if we actually paid.
+                        // Logic check: We incremented consult_count, so next one will cost.
+                        // Let's just refund the point if we paid.
+                        // Actually, simpler: if not found, don't count it.
+                        self.consult_count -= 1;
+                        // But we already deducted intel if consult_count was > 0 BEFORE increment...
+                        // Fix: logic above deducted if consult_count > 0.
+                        // If we are here, we might have deducted.
+                        // It's a bit messy. Let's just say "Input error = no cost".
+                        // Re-adding the point is fine.
+                        // But wait, the check was `if self.consult_count > 0`.
+                        // If this was the first (0), we didn't pay.
+                        // If this was second (1), we paid.
+                        // So if we paid, we refund.
+                        // Determining if we paid: consult_count was incremented. So current is > 1 means previous was > 0.
+                        if self.consult_count > 1 {
+                            self.intel_points += 1;
+                        }
+                    }
                 }
             }
             Directive::Decrypt(target_id) => {

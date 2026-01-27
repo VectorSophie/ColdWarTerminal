@@ -165,6 +165,7 @@ fn main() {
         println!("  [6] {}decrypt -t [ID]{}", BOLD, RESET);
         println!("  [7] {}analyze -t [ID]{}", BOLD, RESET);
         println!("  [8] {}traceroute{}", BOLD, RESET);
+        println!("  [9] {}consult [ADVISOR]{}", BOLD, RESET);
 
         let directive;
         loop {
@@ -200,7 +201,7 @@ fn main() {
             }
             if input == "help" {
                 println!("Usage: command [options] [target]");
-                println!("Aliases accepted: esc, inv, con, leak, sd, dec, ana, trace");
+                println!("Aliases accepted: esc, inv, con, leak, sd, dec, ana, trace, ask");
                 continue;
             }
 
@@ -220,6 +221,17 @@ fn main() {
                     break;
                 }
             }
+            // Fallback for consult arguments (names/roles)
+            if arg_id.is_none() && parts.len() > 1 {
+                // Join remaining parts for multi-word names like "Gen. Vance"
+                // But simply taking the last or second word works if user types "consult vance"
+                // Let's just take the last word or the one after command
+                if parts.len() > args_start_idx {
+                    arg_id = Some(parts[args_start_idx].to_string());
+                }
+            }
+
+            // Allow override if specific arg found
             if arg_id.is_none() && parts.len() > 1 {
                 let last = parts.last().unwrap();
                 if !last.starts_with("-") {
@@ -260,6 +272,17 @@ fn main() {
                     }
                 }
                 "8" | "trace" | "traceroute" | "netstat" | "tr" => Some(Directive::Trace),
+                "9" | "consult" | "ask" | "query" => {
+                    if let Some(target) = arg_id {
+                        Some(Directive::Consult(target))
+                    } else {
+                        println!(
+                            "{}ERROR: MISSING ADVISOR. USAGE: consult [NAME/ROLE]{}",
+                            RED, RESET
+                        );
+                        continue;
+                    }
+                }
                 "quit" | "exit" => std::process::exit(0),
                 _ => {
                     println!("{}BASH: COMMAND NOT FOUND: {}.{}", RED, command_str, RESET);
