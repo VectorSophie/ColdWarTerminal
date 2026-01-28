@@ -24,12 +24,6 @@ impl InputManager {
         Self { rx }
     }
 
-    /// Returns true if there is pending input (non-blocking).
-    /// Consumes one line of input if available.
-    pub fn check_interrupt(&self) -> bool {
-        self.rx.try_recv().is_ok()
-    }
-
     /// Blocking read for the next line of input.
     pub fn read_line(&self) -> String {
         self.rx.recv().unwrap_or_default()

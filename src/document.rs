@@ -219,28 +219,118 @@ fn generate_cable_content(state: &WorldState, rng: &mut SimpleRng, reliability: 
     let tension_perceived =
         state.global_tension * (1.0 + (rng.next_f64() - 0.5) * (1.0 - reliability));
 
+    let subjects = [
+        "BORDER SECTOR 4",
+        "NORTH SEA FLOTILLA",
+        "EASTERN BLOC GARRISON",
+        "SATELLITE GRID",
+        "SUBMARINE WOLF-PACK",
+    ];
+    let action = [
+        "TROOP MOVEMENTS",
+        "HEAT SIGNATURES",
+        "RADAR LOCKS",
+        "CIPHER TRAFFIC",
+        "FUEL LOADING",
+    ];
+
+    let subject = subjects[rng.range(0, subjects.len() as u64) as usize];
+    let act = action[rng.range(0, action.len() as u64) as usize];
+
     if tension_perceived > 0.7 {
-        "FLASH: MASSIVE TROOP MOVEMENTS DETECTED NEAR BORDER SECTOR 4. SATELLITE IMAGERY INCONCLUSIVE BUT HEAT SIGNATURES SPIKING.".to_string()
+        let templates = [
+             format!("FLASH: MASSIVE {} DETECTED NEAR {}. SATELLITE IMAGERY INCONCLUSIVE BUT SIGNATURES SPIKING.", act, subject),
+             format!("CRITICAL: {} ACTIVE. COMMANDER REQUESTS PERMISSION TO ENGAGE IF PROVOKED.", subject),
+             format!("ALERT: INTERCEPTED ORDER TO {} UNITS. 'PREPARE FOR ZERO HOUR'.", subject),
+        ];
+        templates[rng.range(0, templates.len() as u64) as usize].clone()
     } else if tension_perceived > 0.4 {
-        "ROUTINE: INCREASED RADIO CHATTER OBSERVED. PATTERNS MATCH PRE-EXERCISE PROTOCOLS."
-            .to_string()
+        let templates = [
+            format!(
+                "ROUTINE: INCREASED {} OBSERVED AT {}. PATTERNS MATCH PRE-EXERCISE PROTOCOLS.",
+                act, subject
+            ),
+            format!(
+                "UPDATE: {} CONDUCTING UNSCHEDULED MANEUVERS. LIKELY SHOW OF FORCE.",
+                subject
+            ),
+            format!(
+                "INTEL: {} LOGISTICS TRAIN MOVING SLOWLY. NO IMMINENT THREAT.",
+                subject
+            ),
+        ];
+        templates[rng.range(0, templates.len() as u64) as usize].clone()
     } else {
-        "CALM: NO SIGNIFICANT ACTIVITY TO REPORT. STATION CHIEF REQUESTS ADDITIONAL SUPPLIES."
-            .to_string()
+        let templates = [
+            format!(
+                "CALM: NO SIGNIFICANT ACTIVITY AT {}. STATION CHIEF REQUESTS ADDITIONAL SUPPLIES.",
+                subject
+            ),
+            format!(
+                "STATUS: {} QUIET. PERSONNEL OBSERVED PLAYING CARDS.",
+                subject
+            ),
+            format!(
+                "REPORT: WEATHER INTERFERENCE LIMITING {} VISIBILITY. NO HOSTILE INTENT DETECTED.",
+                subject
+            ),
+        ];
+        templates[rng.range(0, templates.len() as u64) as usize].clone()
     }
 }
 
 fn generate_memo_content(state: &WorldState, rng: &mut SimpleRng, _reliability: f64) -> String {
     if rng.random_bool(0.3 + state.secret_weapon_progress * 0.5) {
-        "RE: PROJECT BASILISK. ENERGY CONSUMPTION EXCEEDING GRID CAPACITIES IN SECTOR 7. COVER STORY 'INDUSTRIAL ACCIDENT' PREPARED.".to_string()
+        let anomaly_events = [
+            "ENERGY CONSUMPTION EXCEEDING GRID CAPACITIES",
+            "UNKNOWN DATA PACKETS FLOODING INTERNAL SERVERS",
+            "PHYSICAL CONTAINMENT BREACH IN SECTOR 7",
+            "PERSONNEL REPORTING AUDITORY HALLUCINATIONS",
+            "AUTOMATED TURRETS TRACKING GHOST TARGETS",
+        ];
+        let event = anomaly_events[rng.range(0, anomaly_events.len() as u64) as usize];
+
+        format!(
+            "RE: PROJECT BASILISK. {}. COVER STORY 'INDUSTRIAL ACCIDENT' PREPARED.",
+            event
+        )
     } else {
-        "ADMIN: DEPARTMENTAL RESTRUCTURING POSTPONED DUE TO SECURITY CONCERNS.".to_string()
+        let admin_topics = [
+            "DEPARTMENTAL RESTRUCTURING POSTPONED",
+            "COFFEE MACHINE REPAIR REQUEST DENIED",
+            "MANDATORY SECURITY RE-TRAINING SCHEDULED",
+            "BUDGET CUTS AFFECTING JANITORIAL STAFF",
+            "LOST ID BADGE FOUND IN PARKING LOT",
+        ];
+        let topic = admin_topics[rng.range(0, admin_topics.len() as u64) as usize];
+        format!("ADMIN: {}. PLEASE ADVISE.", topic)
     }
 }
 
 fn generate_budget_content(_state: &WorldState, rng: &mut SimpleRng, _reliability: f64) -> String {
     let cost = rng.range(50, 500);
-    format!("AUDIT FLAG: ${}M UNACCOUNTED FOR IN 'AGRICULTURAL SUBSIDIES'. TRACED TO SHELL COMPANY 'ORION LOGISTICS'.", cost)
+    let departments = [
+        "AGRICULTURAL SUBSIDIES",
+        "INFRASTRUCTURE REPAIR",
+        "EDUCATION GRANTS",
+        "FOREIGN AID",
+        "VETERAN BENEFITS",
+    ];
+    let shell_companies = [
+        "ORION LOGISTICS",
+        "BLUE DAWN HOLDINGS",
+        "VANGUARD SOLUTIONS",
+        "OMEGA GROUP",
+        "SILVER SPEAR INC",
+    ];
+
+    let dept = departments[rng.range(0, departments.len() as u64) as usize];
+    let company = shell_companies[rng.range(0, shell_companies.len() as u64) as usize];
+
+    format!(
+        "AUDIT FLAG: ${}M UNACCOUNTED FOR IN '{}'. TRACED TO SHELL COMPANY '{}'.",
+        cost, dept, company
+    )
 }
 
 fn generate_intercept_content(state: &WorldState, rng: &mut SimpleRng, reliability: f64) -> String {
@@ -248,17 +338,44 @@ fn generate_intercept_content(state: &WorldState, rng: &mut SimpleRng, reliabili
         state.foreign_paranoia * (1.0 + (rng.next_f64() - 0.5) * (1.0 - reliability));
 
     if paranoia_perceived > 0.6 {
-        "DECRYPTED: \"...THEY ARE PREPARING A STRIKE. WE MUST BE READY TO PREEMPT. THE SILOS ARE OPENING...\"".to_string()
+        let threats = [
+            "...THEY ARE PREPARING A STRIKE. WE MUST BE READY TO PREEMPT...",
+            "...THE AMERICAN PIGS ARE WEAK. NOW IS THE TIME...",
+            "...LAUNCH CODES VERIFIED. AWAITING FINAL AUTHORIZATION...",
+            "...THEY KNOW ABOUT THE MOLE. INITIATE EXTRACTION...",
+        ];
+        let threat = threats[rng.range(0, threats.len() as u64) as usize];
+        format!("DECRYPTED: \"{}\"", threat)
     } else {
-        "DECRYPTED: \"...ECONOMIC FORECASTS LOOK GRIM. WE CANNOT AFFORD ANOTHER ESCALATION...\""
-            .to_string()
+        let chatter = [
+            "...ECONOMIC FORECASTS LOOK GRIM. WE CANNOT AFFORD ANOTHER ESCALATION...",
+            "...HARVEST YIELDS ARE DOWN. FOOD RIOTS EXPECTED...",
+            "...GENERAL IVANOV IS DRUNK AGAIN. IGNORE HIS ORDERS...",
+            "...REQUESTING TRANSFER TO A WARMER CLIMATE...",
+        ];
+        let chat = chatter[rng.range(0, chatter.len() as u64) as usize];
+        format!("DECRYPTED: \"{}\"", chat)
     }
 }
 
-fn generate_leak_content(state: &WorldState, _rng: &mut SimpleRng, _reliability: f64) -> String {
+fn generate_leak_content(state: &WorldState, rng: &mut SimpleRng, _reliability: f64) -> String {
     if state.internal_secrecy > 0.7 {
-        "WHISTLEBLOWER: \"THE GOVERNMENT IS LYING ABOUT THE SCOPE OF THE PROGRAM. IT'S NOT DEFENSIVE.\"".to_string()
+        let leaks = [
+            "\"THE GOVERNMENT IS LYING ABOUT THE SCOPE OF THE PROGRAM. IT'S NOT DEFENSIVE.\"",
+            "\"I SAW WHAT THEY KEEP IN THE BASEMENT. IT'S ALIVE.\"",
+            "\"WE ARE NOT IN CONTROL. THE MACHINE IS THINKING FOR ITSELF.\"",
+            "\"THEY ARE TESTING IT ON PRISONERS. I HAVE PROOF.\"",
+        ];
+        let leak = leaks[rng.range(0, leaks.len() as u64) as usize];
+        format!("WHISTLEBLOWER: {}", leak)
     } else {
-        "RUMOR MILL: \"SCIENTISTS DISAPPEARING FROM ACADEMIA. WHERE ARE THEY GOING?\"".to_string()
+        let rumors = [
+            "\"SCIENTISTS DISAPPEARING FROM ACADEMIA. WHERE ARE THEY GOING?\"",
+            "\"STRANGE LIGHTS SEEN OVER NEVADA TEST SITE.\"",
+            "\"ENCRYPTED BROADCASTS INTERRUPTING CARTOON HOUR.\"",
+            "\"LOCAL WATER SUPPLY TASTES LIKE COPPER.\"",
+        ];
+        let rumor = rumors[rng.range(0, rumors.len() as u64) as usize];
+        format!("RUMOR MILL: {}", rumor)
     }
 }

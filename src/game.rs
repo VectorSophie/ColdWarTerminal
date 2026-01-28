@@ -2,31 +2,60 @@ use crate::document::Document;
 use crate::rng::SimpleRng;
 use crate::state::{AdvisorRole, WorldState};
 
+/// Represents the possible commands a player can issue to the engine.
 #[derive(PartialEq)]
 pub enum Directive {
+    /// Increases tension and paranoia, but may force enemy submission.
     Escalate,
+    /// Increases weapon progress and lowers secrecy. Helpful for finding moles.
     Investigate,
+    /// Lowers tension but reduces stability. Viewed as weakness.
     Contain,
+    /// Sacrifices secrecy for stability. Good for public opinion.
     Leak,
+    /// Massively lowers tension but destroys stability and paranoia. Surrender.
     StandDown,
+    /// Spend Intel to decrypt a specific document.
     Decrypt(String),
+    /// Spend Intel to verify the reliability of a document.
     Analyze(String),
-    Trace,
-    Consult(String), // New Directive
+    /// Spend Intel to trace the signal source to a specific advisor.
+    Trace(String),
+    /// Ask an advisor for their recommendation (Costs Intel).
+    Consult(String),
+    /// Aggressively question an advisor. High risk, high info.
+    Interrogate(String),
 }
 
+/// The core engine that manages the game loop, state transitions, and logic.
 pub struct GameEngine {
+    /// The current state of the world (Tension, Stability, etc.)
     pub state: WorldState,
+    /// Current turn number.
     pub turn_count: u32,
+    /// Documents waiting to be processed this turn.
     pub pending_documents: Vec<Document>,
+    /// Current available Intel Points (Action Points).
     pub intel_points: u32,
+    /// Maximum Intel Points for this turn.
     pub max_intel_points: u32,
+    /// Whether a signal interruption (minigame/event) is active.
     pub interruption_active: bool,
+    /// Track consults per turn to calculate costs.
     pub consult_count: u32, // Track consults per turn
+    /// Track number of interrogations this turn (max 2).
+    pub interrogations_this_turn: u32,
+    /// Track which advisors have been interrogated this turn (unique targets only).
+    pub interrogated_advisors: Vec<String>,
+    /// Track number of traces this turn (max 2).
+    pub traces_this_turn: u32,
+    /// Track which advisors have been traced this turn.
+    pub traced_advisors: Vec<String>,
     rng: SimpleRng,
 }
 
 impl GameEngine {
+    /// Initializes a new game engine with default state and a random mole.
     pub fn new() -> Self {
         let mut rng = SimpleRng::new();
         let mut state = WorldState::new();
@@ -43,14 +72,23 @@ impl GameEngine {
             max_intel_points: 1,
             interruption_active: false,
             consult_count: 0,
+            interrogations_this_turn: 0,
+            interrogated_advisors: Vec::new(),
+            traces_this_turn: 0,
+            traced_advisors: Vec::new(),
             rng,
         }
     }
 
+    /// Advances the game to the next turn, generating new documents and events.
     pub fn start_turn(&mut self) {
         self.turn_count += 1;
         self.interruption_active = false;
         self.consult_count = 0; // Reset consults
+        self.interrogations_this_turn = 0;
+        self.interrogated_advisors.clear();
+        self.traces_this_turn = 0;
+        self.traced_advisors.clear();
 
         // SCALING INTERRUPTION DIFFICULTY
         // Turn 1-2: 0%, Turn 3-5: 15%, Turn 6-10: 30%, Turn 11+: 50%
@@ -95,56 +133,110 @@ impl GameEngine {
         self.pending_documents = new_docs;
     }
 
-    pub fn resolve_directive(&mut self, directive: Directive) -> (Vec<String>, bool) {
+    pub fn resolve_directive(&mut self, mut directive: Directive) -> (Vec<String>, bool) {
         let mut feedback = Vec::new();
         let mut turn_ended = true;
 
+        // BASILISK INTERVENTION (The Basilisk)
+        // If system corruption is high, the AI may override your command.
+        if self.state.system_corruption > 0.4 {
+            let override_chance = (self.state.system_corruption - 0.4) * 0.5; // Up to 30% chance at max corruption
+            if self.rng.random_bool(override_chance) {
+                feedback.push(
+                    "WARNING: SYSTEM OVERRIDE DETECTED. AI ASSUMING DIRECT CONTROL.".to_string(),
+                );
+
+                // Pick a random directive based on "Machine Agenda" (usually Escalation or Investigation)
+                let new_directive = if self.rng.random_bool(0.5) {
+                    feedback.push(">> COMMAND REWRITTEN: ESCALATING CONFLICT.".to_string());
+                    Directive::Escalate
+                } else {
+                    feedback.push(">> COMMAND REWRITTEN: PURGING INTERNAL THREATS.".to_string());
+                    Directive::Investigate
+                };
+
+                // If original directive was target-based (Decrypt, Consult, Interrogate), we lose that target info.
+                // We simply replace 'directive' variable.
+                directive = new_directive;
+            }
+        }
+
         match directive {
-            Directive::Trace => {
+            Directive::Trace(target) => {
                 turn_ended = false;
+
+                // Limit Logic: Max 2 per turn
+                if self.traces_this_turn >= 2 {
+                    feedback.push(
+                        "FAILURE: SIGNAL TRACE LIMIT REACHED FOR THIS CYCLE (MAX 2).".to_string(),
+                    );
+                    return (feedback, false);
+                }
+
                 if self.intel_points == 0 {
                     feedback.push("FAILURE: INSUFFICIENT INTEL ASSETS.".to_string());
                     return (feedback, false);
                 }
-                self.intel_points -= 1;
 
-                if self.interruption_active {
-                    feedback.push("TRACE INITIATED... SIGNAL LOCK ESTABLISHED.".to_string());
-                    feedback.push("ORIGIN POINT TRIANGULATED:".to_string());
-
-                    // Find the mole and increase suspicion
-                    let mole_idx = self.state.advisors.iter().position(|a| a.is_mole).unwrap();
-                    let mole_name = self.state.advisors[mole_idx].name.clone();
-
-                    // Clue logic: Give a hint about the mole's role/name
-                    if self.rng.random_bool(0.5) {
-                        feedback.push(format!(
-                            ">> PARTIAL MATCH: AUTHORIZED DEVICE REGISTERED TO '{}'.",
-                            mole_name
-                        ));
-                    } else {
-                        let role_str = match self.state.advisors[mole_idx].role {
-                            AdvisorRole::General => "MILITARY COMMAND NODE",
-                            AdvisorRole::Director => "INTELLIGENCE DATACENTER",
-                            AdvisorRole::Ambassador => "DIPLOMATIC SECURE LINE",
-                        };
-                        feedback.push(format!(">> ROUTING DETECTED VIA {}.", role_str));
-                    }
-
-                    self.state.advisors[mole_idx].suspicion += 35;
-                    if self.state.advisors[mole_idx].suspicion >= 100 {
-                        // Trigger the Reveal/Crisis immediately?
-                        // Or just note it. Let's note it.
-                        feedback.push(
-                            "!!! MOLE IDENTITY CONFIRMED. THEY KNOW WE KNOW. !!!".to_string(),
-                        );
-                        self.state.red_phone_active = true;
-                    }
-                } else {
+                if !self.interruption_active {
                     feedback.push(
                         "TRACE FAILED: NO ACTIVE SIGNAL INTERRUPTION TO LOCK ONTO.".to_string(),
                     );
-                    self.intel_points += 1; // Refund
+                    return (feedback, false);
+                }
+
+                // Find Advisor
+                let target_lower = target.to_lowercase();
+                let advisor_idx = self.state.advisors.iter().position(|a| {
+                    a.name.to_lowercase().contains(&target_lower)
+                        || format!("{:?}", a.role)
+                            .to_lowercase()
+                            .contains(&target_lower)
+                });
+
+                if let Some(idx) = advisor_idx {
+                    let advisor = &self.state.advisors[idx];
+
+                    // Unique Target Logic
+                    if self.traced_advisors.contains(&advisor.name) {
+                        feedback.push(format!(
+                            "FAILURE: SIGNAL SIGNATURE FOR '{}' ALREADY SCANNED THIS CYCLE.",
+                            advisor.name
+                        ));
+                        return (feedback, false);
+                    }
+
+                    self.intel_points -= 1;
+                    self.traces_this_turn += 1;
+                    self.traced_advisors.push(advisor.name.clone());
+
+                    feedback.push("TRACE INITIATED... COMPARING SIGNAL SIGNATURES...".to_string());
+
+                    if advisor.is_mole {
+                        feedback.push(format!(
+                            ">> MATCH CONFIRMED: {} IS BROADCASTING ON UNAUTHORIZED FREQUENCY.",
+                            advisor.name.to_uppercase()
+                        ));
+                        feedback.push(
+                            "!!! MOLE IDENTITY CONFIRMED. THEY KNOW WE KNOW. !!!".to_string(),
+                        );
+                        // We track suspicion but don't auto-max it here, just confirm it.
+                        // Actually, let's max suspicion because we KNOW.
+                        // But we need mutable access. We have &self.state.advisors[idx] which is immutable.
+                        // We need to re-borrow mutably.
+                        // Rust borrow checker won't like us holding 'advisor' ref while borrowing self.state mutably.
+                        // So we use index.
+                        self.state.advisors[idx].suspicion = 100;
+                        self.state.red_phone_active = true;
+                    } else {
+                        feedback.push(format!(
+                            ">> NO MATCH: {} DEVICE SIGNATURE IS CLEAN.",
+                            advisor.name.to_uppercase()
+                        ));
+                    }
+                } else {
+                    feedback.push(format!("ERROR: ADVISOR '{}' NOT FOUND.", target));
+                    // No cost if not found
                 }
             }
             Directive::Consult(target) => {
@@ -274,6 +366,112 @@ impl GameEngine {
                             self.intel_points += 1;
                         }
                     }
+                }
+            }
+            Directive::Interrogate(target) => {
+                turn_ended = false;
+
+                // Limit Logic: Max 2 per turn
+                if self.interrogations_this_turn >= 2 {
+                    feedback.push(
+                        "FAILURE: INTERROGATION LIMIT REACHED FOR THIS CYCLE (MAX 2).".to_string(),
+                    );
+                    return (feedback, false);
+                }
+
+                // Cost: 2 Intel (Expensive)
+                if self.intel_points < 2 {
+                    feedback.push("FAILURE: INSUFFICIENT INTEL ASSETS (REQ: 2).".to_string());
+                    return (feedback, false);
+                }
+
+                // Find Advisor
+                let target_lower = target.to_lowercase();
+                let advisor_idx = self.state.advisors.iter().position(|a| {
+                    a.name.to_lowercase().contains(&target_lower)
+                        || format!("{:?}", a.role)
+                            .to_lowercase()
+                            .contains(&target_lower)
+                });
+
+                if let Some(idx) = advisor_idx {
+                    let advisor = &mut self.state.advisors[idx];
+
+                    // Unique Target Logic: Cannot interrogate same person twice in one turn
+                    if self.interrogated_advisors.contains(&advisor.name) {
+                        feedback.push(format!(
+                            "FAILURE: SUBJECT '{}' ALREADY QUESTIONED THIS CYCLE.",
+                            advisor.name
+                        ));
+                        return (feedback, false);
+                    }
+
+                    self.intel_points -= 2;
+                    self.interrogations_this_turn += 1;
+                    self.interrogated_advisors.push(advisor.name.clone());
+
+                    feedback.push(format!(
+                        "INTERROGATING SUBJECT: {}",
+                        advisor.name.to_uppercase()
+                    ));
+
+                    // Stress them out
+                    advisor.suspicion += 20;
+
+                    // The Response Logic
+                    // 1. If Mole: 50% chance to slip up (Suspicious statement), 50% chance to frame someone else.
+                    // 2. If Innocent: Becomes paranoid (increases Foreign Paranoia) or Defensive (Lowers Stability).
+
+                    if advisor.is_mole {
+                        if self.rng.random_bool(0.5) {
+                            feedback.push(format!(
+                                ">> {}: \"You have no proof! The system is lying to you!\"",
+                                advisor.name
+                            ));
+                            feedback.push(
+                                "ANALYSIS: SUBJECT HEART RATE ELEVATED. DECEPTION INDICATED."
+                                    .to_string(),
+                            );
+                            advisor.suspicion += 15;
+                        } else {
+                            // Frame someone random
+                            feedback.push(format!(">> {}: \"I am not the leak! Check the logs! It's clearly a setup!\"", advisor.name));
+                            feedback.push("ANALYSIS: SUBJECT ATTEMPTS TO DEFLECT.".to_string());
+                        }
+                    } else {
+                        match advisor.role {
+                            AdvisorRole::General => {
+                                feedback.push(format!(">> {}: \"How dare you question my loyalty! I have bled for this country!\"", advisor.name));
+                                self.state.domestic_stability -= 0.05; // Army unhappy
+                            }
+                            AdvisorRole::Director => {
+                                feedback.push(format!(">> {}: \"This inquiry is unauthorized. You are making a mistake.\"", advisor.name));
+                                self.state.internal_secrecy -= 0.05; // Intel agency disrupted
+                            }
+                            AdvisorRole::Ambassador => {
+                                feedback.push(format!(
+                                    ">> {}: \"This is a witch hunt! We are losing credibility!\"",
+                                    advisor.name
+                                ));
+                                self.state.foreign_paranoia += 0.05; // Diplomat scares easily
+                            }
+                        }
+                        feedback
+                            .push("ANALYSIS: SUBJECT APPEARS GENUINELY DISTRESSED.".to_string());
+                    }
+
+                    if advisor.suspicion >= 100 {
+                        feedback.push(format!(
+                            "!!! SUSPICION CRITICAL: {} IDENTIFIED AS THREAT !!!",
+                            advisor.name.to_uppercase()
+                        ));
+                        if advisor.is_mole {
+                            self.state.red_phone_active = true;
+                        }
+                    }
+                } else {
+                    feedback.push(format!("ERROR: ADVISOR '{}' NOT FOUND.", target));
+                    self.intel_points += 2; // Refund
                 }
             }
             Directive::Decrypt(target_id) => {
@@ -422,13 +620,20 @@ impl GameEngine {
                 feedback.push("WARNING: UNAUTHORIZED SILO ACTIVATION DETECTED.".to_string());
             }
 
-            if self.state.secret_weapon_progress > 0.9 && self.rng.random_bool(0.2) {
+            // BASILISK CORRUPTION MECHANIC
+            if self.state.secret_weapon_progress > 0.5 {
+                let increase = (self.state.secret_weapon_progress - 0.5) * 0.1;
+                self.state.system_corruption += increase;
+            }
+
+            if self.state.system_corruption > 0.9 && self.rng.random_bool(0.2) {
                 feedback.push(
                     " THE BASILISK IS SPEAKING TO THE OPERATORS. THEY ARE WEEPING.".to_string(),
                 );
             }
         }
 
+        self.state.system_corruption = self.state.system_corruption.clamp(0.0, 1.0);
         (feedback, turn_ended)
     }
 }

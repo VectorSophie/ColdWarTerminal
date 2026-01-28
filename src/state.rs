@@ -33,9 +33,12 @@ pub struct WorldState {
     /// Hidden internal weapon progress (0.0 to 1.0)
     pub secret_weapon_progress: f64,
 
-    // New: Advisors
+    /// List of active advisors (one is a mole).
     pub advisors: Vec<Advisor>,
-    pub red_phone_active: bool, // Crisis Mode Trigger
+    /// Trigger for the "Red Phone" crisis event.
+    pub red_phone_active: bool,
+    /// 0.0 (Pure) to 1.0 (Corrupted) - affects system autonomy.
+    pub system_corruption: f64,
 }
 
 impl WorldState {
@@ -74,6 +77,7 @@ impl WorldState {
             secret_weapon_progress: 0.1,
             advisors,
             red_phone_active: false,
+            system_corruption: 0.0,
         }
     }
 
