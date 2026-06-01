@@ -1,6 +1,6 @@
 use crate::document::Document;
 use crate::rng::SimpleRng;
-use crate::state::{AdvisorRole, CrisisUrgency, Ending, GameAct, WorldState};
+use crate::state::{AdvisorRole, BasiliskStage, CrisisUrgency, Ending, GameAct, WorldState};
 
 /// Represents the possible commands a player can issue to the engine.
 #[derive(PartialEq)]
@@ -98,6 +98,9 @@ impl GameEngine {
         self.turn_count += 1;
         self.interruption_active = false;
         self.consult_count = 0; // Reset consults
+        if self.mole_silence_turns > 0 {
+            self.mole_silence_turns -= 1;
+        }
         self.interrogations_this_turn = 0;
         self.interrogated_advisors.clear();
         self.traces_this_turn = 0;
@@ -144,6 +147,24 @@ impl GameEngine {
         }
 
         self.pending_documents = new_docs;
+
+        // Basilisk fake document injection (AWARE and above)
+        let stage = BasiliskStage::from_corruption(self.state.system_corruption);
+        if stage != BasiliskStage::Dormant && self.rng.random_bool(0.65) {
+            use crate::document::generate_basilisk_fake_doc;
+            let fake = generate_basilisk_fake_doc(&self.state, &mut self.rng, self.turn_count);
+            let pos = self.rng.range(0, self.pending_documents.len() as u64 + 1) as usize;
+            self.pending_documents.insert(pos, fake);
+        }
+
+        // Basilisk awakening bell at AWARE threshold (before awakening_played is set — that's in main.rs)
+        if stage == BasiliskStage::Aware && !self.basilisk_awakening_played {
+            print!("\x07\x07");
+        }
+
+        // Merge crisis docs into pending_documents
+        let mut crises = self.generate_crises();
+        self.pending_documents.append(&mut crises);
     }
 
     /// Returns the new act if a transition just occurred, None otherwise.
@@ -238,26 +259,30 @@ impl GameEngine {
 
         // BASILISK INTERVENTION (The Basilisk)
         // If system corruption is high, the AI may override your command.
-        if self.state.system_corruption > 0.4 {
-            let override_chance = (self.state.system_corruption - 0.4) * 0.5; // Up to 30% chance at max corruption
-            if self.rng.random_bool(override_chance) {
-                feedback.push(
-                    "WARNING: SYSTEM OVERRIDE DETECTED. AI ASSUMING DIRECT CONTROL.".to_string(),
-                );
+        let stage = BasiliskStage::from_corruption(self.state.system_corruption);
+        let override_chance = match stage {
+            BasiliskStage::Dormant     => 0.0,
+            BasiliskStage::Aware       => 0.05,
+            BasiliskStage::Interfering => (self.state.system_corruption - 0.4) * 0.5,
+            BasiliskStage::Autonomous  => 0.65,
+        };
+        if self.rng.random_bool(override_chance) {
+            feedback.push(
+                "WARNING: SYSTEM OVERRIDE DETECTED. AI ASSUMING DIRECT CONTROL.".to_string(),
+            );
 
-                // Pick a random directive based on "Machine Agenda" (usually Escalation or Investigation)
-                let new_directive = if self.rng.random_bool(0.5) {
-                    feedback.push(">> COMMAND REWRITTEN: ESCALATING CONFLICT.".to_string());
-                    Directive::Escalate
-                } else {
-                    feedback.push(">> COMMAND REWRITTEN: PURGING INTERNAL THREATS.".to_string());
-                    Directive::Investigate
-                };
+            // Pick a random directive based on "Machine Agenda" (usually Escalation or Investigation)
+            let new_directive = if self.rng.random_bool(0.5) {
+                feedback.push(">> COMMAND REWRITTEN: ESCALATING CONFLICT.".to_string());
+                Directive::Escalate
+            } else {
+                feedback.push(">> COMMAND REWRITTEN: PURGING INTERNAL THREATS.".to_string());
+                Directive::Investigate
+            };
 
-                // If original directive was target-based (Decrypt, Consult, Interrogate), we lose that target info.
-                // We simply replace 'directive' variable.
-                directive = new_directive;
-            }
+            // If original directive was target-based (Decrypt, Consult, Interrogate), we lose that target info.
+            // We simply replace 'directive' variable.
+            directive = new_directive;
         }
 
         match directive {
@@ -326,6 +351,7 @@ impl GameEngine {
                         // Rust borrow checker won't like us holding 'advisor' ref while borrowing self.state mutably.
                         // So we use index.
                         self.state.advisors[idx].suspicion = 100;
+                        self.mole_incident_occurred = true;
                         self.state.red_phone_active = true;
                     } else {
                         feedback.push(format!(
@@ -568,6 +594,10 @@ impl GameEngine {
                             self.state.red_phone_active = true;
                         }
                     }
+                    // advisor borrow ends here; use idx to check suspicion threshold
+                    if self.state.advisors[idx].suspicion > 50 {
+                        self.mole_incident_occurred = true;
+                    }
                 } else {
                     feedback.push(format!("ERROR: ADVISOR '{}' NOT FOUND.", target));
                     self.intel_points += 2; // Refund
@@ -713,6 +743,11 @@ impl GameEngine {
                 self.state.accidental_escalation_risk.clamp(0.0, 1.0);
             self.state.domestic_stability = self.state.domestic_stability.clamp(0.0, 1.0);
             self.state.secret_weapon_progress = self.state.secret_weapon_progress.clamp(0.0, 1.0);
+
+            if self.state.global_tension > self.peak_tension {
+                self.peak_tension = self.state.global_tension;
+                self.peak_tension_turn = self.turn_count;
+            }
 
             if self.state.accidental_escalation_risk > 0.6 && self.rng.random_bool(0.3) {
                 self.state.global_tension += 0.15;
