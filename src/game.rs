@@ -1,6 +1,6 @@
 use crate::document::Document;
 use crate::rng::SimpleRng;
-use crate::state::{AdvisorRole, WorldState};
+use crate::state::{AdvisorRole, CrisisUrgency, Ending, GameAct, WorldState};
 
 /// Represents the possible commands a player can issue to the engine.
 #[derive(PartialEq)]
@@ -29,28 +29,29 @@ pub enum Directive {
 
 /// The core engine that manages the game loop, state transitions, and logic.
 pub struct GameEngine {
-    /// The current state of the world (Tension, Stability, etc.)
     pub state: WorldState,
-    /// Current turn number.
     pub turn_count: u32,
-    /// Documents waiting to be processed this turn.
     pub pending_documents: Vec<Document>,
-    /// Current available Intel Points (Action Points).
     pub intel_points: u32,
-    /// Maximum Intel Points for this turn.
     pub max_intel_points: u32,
-    /// Whether a signal interruption (minigame/event) is active.
     pub interruption_active: bool,
-    /// Track consults per turn to calculate costs.
-    pub consult_count: u32, // Track consults per turn
-    /// Track number of interrogations this turn (max 2).
+    pub consult_count: u32,
     pub interrogations_this_turn: u32,
-    /// Track which advisors have been interrogated this turn (unique targets only).
     pub interrogated_advisors: Vec<String>,
-    /// Track number of traces this turn (max 2).
     pub traces_this_turn: u32,
-    /// Track which advisors have been traced this turn.
     pub traced_advisors: Vec<String>,
+    // ── New fields ──
+    pub act: GameAct,
+    pub mole_neutralized: bool,
+    pub mole_name: String,
+    pub mole_incident_occurred: bool,
+    pub standdown_triggered: bool,
+    pub mole_transmission_active: bool,
+    pub mole_transmission_target: String,
+    pub mole_silence_turns: u32,
+    pub peak_tension: f64,
+    pub peak_tension_turn: u32,
+    pub basilisk_awakening_played: bool,
     rng: SimpleRng,
 }
 
@@ -63,6 +64,7 @@ impl GameEngine {
         // Assign a random mole
         let mole_idx = rng.range(0, 3) as usize;
         state.advisors[mole_idx].is_mole = true;
+        let mole_name = state.advisors[mole_idx].name.clone();
 
         Self {
             state,
@@ -76,6 +78,17 @@ impl GameEngine {
             interrogated_advisors: Vec::new(),
             traces_this_turn: 0,
             traced_advisors: Vec::new(),
+            act: GameAct::Watchdog,
+            mole_neutralized: false,
+            mole_name,
+            mole_incident_occurred: false,
+            standdown_triggered: false,
+            mole_transmission_active: false,
+            mole_transmission_target: String::new(),
+            mole_silence_turns: 0,
+            peak_tension: 0.0,
+            peak_tension_turn: 0,
+            basilisk_awakening_played: false,
             rng,
         }
     }
@@ -131,6 +144,92 @@ impl GameEngine {
         }
 
         self.pending_documents = new_docs;
+    }
+
+    /// Returns the new act if a transition just occurred, None otherwise.
+    pub fn check_act_transition(&mut self) -> Option<GameAct> {
+        match self.act {
+            GameAct::Watchdog => {
+                if self.state.system_corruption >= 0.25 && self.mole_incident_occurred {
+                    self.act = GameAct::Protocol;
+                    return Some(GameAct::Protocol);
+                }
+            }
+            GameAct::Protocol => {
+                if self.state.system_corruption >= 0.75 || self.state.global_tension >= 0.85 {
+                    self.act = GameAct::ZeroHour;
+                    return Some(GameAct::ZeroHour);
+                }
+            }
+            GameAct::ZeroHour => {}
+        }
+        None
+    }
+
+    /// Evaluates which ending applies in strict priority order. Returns None if game not over.
+    pub fn evaluate_ending(&self) -> Option<Ending> {
+        if self.state.system_corruption >= 1.0 {
+            return Some(Ending::TheMachineWon);
+        }
+        if self.state.global_tension >= 1.0 {
+            return Some(Ending::NuclearWinter);
+        }
+        if self.state.domestic_stability <= 0.0 {
+            return Some(Ending::ThePurge);
+        }
+        if self.mole_neutralized && self.state.system_corruption >= 0.75 {
+            return Some(Ending::PyrrhicVictory);
+        }
+        if self.mole_neutralized && self.state.global_tension < 0.6 && self.state.system_corruption < 0.5 {
+            return Some(Ending::WatchdogSuccess);
+        }
+        if self.standdown_triggered && self.state.domestic_stability > 0.0 && self.state.global_tension < 0.5 {
+            return Some(Ending::ColdPeace);
+        }
+        None
+    }
+
+    /// Builds debrief data from current engine state.
+    pub fn build_debrief(&self) -> crate::state::DebriefData {
+        crate::state::DebriefData {
+            mole_name: self.mole_name.clone(),
+            mole_caught: self.mole_neutralized,
+            final_tension: self.state.global_tension,
+            final_corruption: self.state.system_corruption,
+            final_stability: self.state.domestic_stability,
+            peak_tension_turn: self.peak_tension_turn,
+        }
+    }
+
+    /// Generates crisis documents for this turn based on current act.
+    fn generate_crises(&mut self) -> Vec<Document> {
+        use crate::document::{generate_basilisk_directive_doc, generate_crisis_doc};
+
+        let (min, max, can_critical) = match self.act {
+            GameAct::Watchdog => (0u32, 1u32, false),
+            GameAct::Protocol => (1, 2, true),
+            GameAct::ZeroHour => (2, 3, true),
+        };
+
+        let count = self.rng.range(min as u64, (max + 1) as u64) as u32;
+        let mut crises = Vec::new();
+
+        for _ in 0..count {
+            let urgency = if can_critical && self.rng.random_bool(0.25) {
+                CrisisUrgency::Critical(15)
+            } else if self.rng.random_bool(0.5) {
+                CrisisUrgency::High
+            } else {
+                CrisisUrgency::Low
+            };
+            crises.push(generate_crisis_doc(&self.state, &mut self.rng, self.turn_count, urgency));
+        }
+
+        if self.act == GameAct::ZeroHour && self.rng.random_bool(0.4) {
+            crises.push(generate_basilisk_directive_doc(&mut self.rng));
+        }
+
+        crises
     }
 
     pub fn resolve_directive(&mut self, mut directive: Directive) -> (Vec<String>, bool) {
