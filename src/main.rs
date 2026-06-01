@@ -22,30 +22,7 @@ fn main() {
     let mut stdout = io::stdout();
 
     // Boot Sequence
-    ui::clear_screen();
-    ui::type_text(
-        "INITIALIZING SECURE TERMINAL LINK...",
-        30,
-        ui::TEAL,
-        0.0,
-        &mut rng,
-    );
-    thread::sleep(Duration::from_millis(500));
-    ui::type_text(
-        "LOADING GEOPOLITICAL HEURISTICS...",
-        20,
-        ui::TEAL,
-        0.05,
-        &mut rng,
-    );
-    thread::sleep(Duration::from_millis(500));
-    ui::type_text(
-        "ESTABLISHING NEURAL HANDSHAKE...",
-        20,
-        ui::TEAL,
-        0.1,
-        &mut rng,
-    );
+    ascii_art::play_boot_sequence(&mut rng);
 
     let mut skip_generation = false;
 
@@ -113,6 +90,20 @@ fn main() {
 
         if !skip_generation {
             engine.start_turn();
+
+            // Play Basilisk awakening scene on first AWARE crossing
+            if crate::state::BasiliskStage::from_corruption(engine.state.system_corruption)
+                != crate::state::BasiliskStage::Dormant
+                && !engine.basilisk_awakening_played
+            {
+                ascii_art::play_basilisk_awakening(&mut rng);
+                engine.basilisk_awakening_played = true;
+            }
+
+            // Check for act transition and play splash
+            if let Some(new_act) = engine.check_act_transition() {
+                ascii_art::play_act_transition(&new_act, &mut rng);
+            }
         } else {
             skip_generation = false;
         }
@@ -191,11 +182,17 @@ fn main() {
 
         // Display Documents
         for doc in &engine.pending_documents {
-            let color = if doc.is_encrypted {
-                ui::RED_ALERT
-            } else {
-                ui::TEAL
+            // Critical crisis gets a special header
+            if let Some(crate::state::CrisisUrgency::Critical(_)) = &doc.crisis_urgency {
+                ui::draw_critical_doc_header(&mut rng);
+            }
+
+            let color = match &doc.crisis_urgency {
+                Some(crate::state::CrisisUrgency::Critical(_)) => ui::RED_ALERT,
+                Some(crate::state::CrisisUrgency::High)        => ui::ORANGE,
+                _                                              => if doc.is_encrypted { ui::RED_ALERT } else { ui::TEAL },
             };
+
             println!(
                 "{} [ID: {}] CLASS: {} :: {}",
                 color, doc.id, doc.clearance_level, doc.timestamp
@@ -215,8 +212,13 @@ fn main() {
                 );
             } else {
                 let content = corrupt_text(&doc.content, engine.turn_count, &mut rng);
-                println!(" {}{}{}", ui::TEAL, content, ui::RESET);
+                println!(" {}{}{}", color, content, ui::RESET);
             }
+
+            if let Some(crate::state::CrisisUrgency::High) = &doc.crisis_urgency {
+                println!(" {}[ !! UNRESOLVED — ESCALATES NEXT TURN !! ]{}", ui::ORANGE, ui::RESET);
+            }
+
             println!("{}{}", ui::GREY_DIM, "─".repeat(60));
         }
         println!("{}", ui::RESET);
