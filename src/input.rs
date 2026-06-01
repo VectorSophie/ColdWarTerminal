@@ -33,4 +33,9 @@ impl InputManager {
     pub fn flush(&self) {
         while self.rx.try_recv().is_ok() {}
     }
+
+    /// Non-blocking read with a timeout. Returns None on timeout or channel close.
+    pub fn try_read_line(&self, timeout: std::time::Duration) -> Option<String> {
+        self.rx.recv_timeout(timeout).ok()
+    }
 }
