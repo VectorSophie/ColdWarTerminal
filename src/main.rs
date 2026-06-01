@@ -211,8 +211,16 @@ fn main() {
                     ui::RESET
                 );
             } else {
-                let content = corrupt_text(&doc.content, engine.turn_count, &mut rng);
-                println!(" {}{}{}", color, content, ui::RESET);
+                // Corruption only kicks in at Interfering stage (50%+), not from turn count
+                let glitch = if matches!(
+                    crate::state::BasiliskStage::from_corruption(engine.state.system_corruption),
+                    crate::state::BasiliskStage::Interfering | crate::state::BasiliskStage::Autonomous
+                ) {
+                    corrupt_text(&doc.content, engine.turn_count, &mut rng)
+                } else {
+                    doc.content.clone()
+                };
+                ui::type_text(&format!(" {}", glitch), 5, color, 0.0, &mut rng);
             }
 
             if let Some(crate::state::CrisisUrgency::High) = &doc.crisis_urgency {
@@ -391,7 +399,7 @@ fn main() {
 
             println!("\n{}EXECUTING DIRECTIVE...{}", ui::AMBER, ui::RESET);
             for line in feedback {
-                ui::type_text(&line, 15, ui::TEAL, 0.02, &mut rng);
+                ui::type_text(&line, 30, ui::TEAL, 0.02, &mut rng);
             }
 
             if turn_ended {

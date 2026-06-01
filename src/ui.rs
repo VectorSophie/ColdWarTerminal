@@ -143,7 +143,7 @@ pub fn draw_hud(turn: u32, tension: f64, intel: u32, max_intel: u32, corruption:
     // Content
     print!("{}{}", " ".repeat(pad_left), date_str);
     print!("{}", " ".repeat(gap1));
-    if corruption >= 0.25 && rng.random_bool(0.15) {
+    if corruption >= 0.50 && rng.random_bool(0.15) {
         let scrambled = format!("{:.2}", tension)
             .chars()
             .map(|c| if c.is_ascii_digit() && rng.random_bool(0.5) { '#' } else { c })

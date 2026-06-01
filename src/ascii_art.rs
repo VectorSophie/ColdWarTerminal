@@ -154,13 +154,13 @@ pub fn play_act_transition(act: &GameAct, rng: &mut SimpleRng) {
         GameAct::Protocol => ui::AMBER,
         GameAct::ZeroHour => ui::RED_ALERT,
     };
-    ui::type_text(art, 8, color, 0.0, rng);
+    ui::type_text(art, 18, color, 0.0, rng);
     thread::sleep(Duration::from_secs(3));
 }
 
 pub fn play_basilisk_awakening(rng: &mut SimpleRng) {
     ui::clear_screen();
-    ui::type_text(BASILISK_AWAKENING, 12, ui::RED_ALERT, 0.05, rng);
+    ui::type_text(BASILISK_AWAKENING, 28, ui::RED_ALERT, 0.05, rng);
     thread::sleep(Duration::from_secs(3));
 }
 
@@ -174,19 +174,19 @@ pub fn play_ending(ending: &Ending, rng: &mut SimpleRng) {
         Ending::WatchdogSuccess => (END_WATCHDOG_SUCCESS, ui::TEAL),
         Ending::ColdPeace       => (END_COLD_PEACE,       ui::TEAL),
     };
-    ui::type_text(art, 10, color, 0.0, rng);
-    thread::sleep(Duration::from_secs(2));
+    ui::type_text(art, 22, color, 0.0, rng);
+    thread::sleep(Duration::from_secs(3));
 }
 
 pub fn play_boot_sequence(rng: &mut SimpleRng) {
     ui::clear_screen();
-    ui::type_text("COLD WAR TERMINAL // SDI COMMAND INTERFACE", 25, ui::TEAL, 0.0, rng);
-    ui::type_text("CLASSIFICATION: ULTRA SECRET // LEVEL 5 CLEARANCE REQUIRED", 18, ui::TEAL, 0.0, rng);
+    ui::type_text("COLD WAR TERMINAL // SDI COMMAND INTERFACE", 45, ui::TEAL, 0.0, rng);
+    ui::type_text("CLASSIFICATION: ULTRA SECRET // LEVEL 5 CLEARANCE REQUIRED", 35, ui::TEAL, 0.0, rng);
     ui::type_text("", 10, ui::TEAL, 0.0, rng);
-    ui::type_text("INITIALIZING SECURE TERMINAL LINK...", 30, ui::TEAL, 0.0, rng);
-    thread::sleep(Duration::from_millis(500));
-    ui::type_text("LOADING GEOPOLITICAL HEURISTICS...", 20, ui::TEAL, 0.05, rng);
-    thread::sleep(Duration::from_millis(500));
-    ui::type_text("ESTABLISHING NEURAL HANDSHAKE...", 20, ui::TEAL, 0.1, rng);
-    thread::sleep(Duration::from_millis(800));
+    ui::type_text("INITIALIZING SECURE TERMINAL LINK...", 55, ui::TEAL, 0.0, rng);
+    thread::sleep(Duration::from_millis(600));
+    ui::type_text("LOADING GEOPOLITICAL HEURISTICS...", 40, ui::TEAL, 0.05, rng);
+    thread::sleep(Duration::from_millis(600));
+    ui::type_text("ESTABLISHING NEURAL HANDSHAKE...", 40, ui::TEAL, 0.1, rng);
+    thread::sleep(Duration::from_millis(1000));
 }
