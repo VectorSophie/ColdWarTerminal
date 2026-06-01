@@ -1,3 +1,4 @@
+mod ascii_art;
 mod document;
 mod game;
 mod input;
@@ -21,30 +22,7 @@ fn main() {
     let mut stdout = io::stdout();
 
     // Boot Sequence
-    ui::clear_screen();
-    ui::type_text(
-        "INITIALIZING SECURE TERMINAL LINK...",
-        30,
-        ui::TEAL,
-        0.0,
-        &mut rng,
-    );
-    thread::sleep(Duration::from_millis(500));
-    ui::type_text(
-        "LOADING GEOPOLITICAL HEURISTICS...",
-        20,
-        ui::TEAL,
-        0.05,
-        &mut rng,
-    );
-    thread::sleep(Duration::from_millis(500));
-    ui::type_text(
-        "ESTABLISHING NEURAL HANDSHAKE...",
-        20,
-        ui::TEAL,
-        0.1,
-        &mut rng,
-    );
+    ascii_art::play_boot_sequence(&mut rng);
 
     let mut skip_generation = false;
 
@@ -58,8 +36,74 @@ fn main() {
             engine.state.red_phone_active = false;
         }
 
+        // Mole transmission interception window
+        if engine.mole_transmission_active {
+            use crate::document::generate_mole_transmission_doc;
+            let target = engine.mole_transmission_target.clone();
+            let doc = generate_mole_transmission_doc(&target, &mut rng);
+
+            ui::clear_screen();
+            println!("{}", ui::RED_ALERT);
+            println!("!!! {} !!!", doc.content);
+            println!("{}", ui::RESET);
+
+            print!("{}root@command:~$ {}", ui::TEAL, ui::RESET);
+            stdout.flush().unwrap();
+            let response = ui::run_countdown(15, "SIGNAL INTERCEPT", &input_mgr);
+
+            let intercepted = if let Some(ref cmd) = response {
+                let parts: Vec<&str> = cmd.split_whitespace().collect();
+                let base = parts.first().map(|s| s.trim_start_matches('-').to_lowercase()).unwrap_or_default();
+                // Find the last non-flag token as the target name
+                let arg = parts.iter()
+                    .filter(|s| !s.starts_with('-'))
+                    .last()
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_default();
+                let first_word = target.to_lowercase();
+                let first_word = first_word.split_whitespace().next().unwrap_or("");
+                (base == "trace" || base == "traceroute") && arg.contains(first_word)
+            } else {
+                false
+            };
+
+            engine.mole_transmission_active = false;
+            engine.mole_transmission_target = String::new();
+
+            if intercepted {
+                println!("{}SIGNAL CUT. {} IN CUSTODY.{}", ui::TEAL, target.to_uppercase(), ui::RESET);
+                engine.state.red_phone_active = true;
+            } else {
+                println!("{}TRANSMISSION COMPLETE. ENEMY HAS THE CODES.{}", ui::RED_ALERT, ui::RESET);
+                if let Some(mole) = engine.state.advisors.iter_mut().find(|a| a.name == target) {
+                    mole.suspicion = 60;
+                }
+                engine.state.global_tension += 0.2;
+                engine.state.global_tension = engine.state.global_tension.clamp(0.0, 1.0);
+                engine.mole_silence_turns = 2;
+            }
+
+            println!("\n{}[PRESS ENTER TO CONTINUE]{}", ui::TEAL, ui::RESET);
+            let _ = input_mgr.read_line();
+            skip_generation = true;
+        }
+
         if !skip_generation {
             engine.start_turn();
+
+            // Play Basilisk awakening scene on first AWARE crossing
+            if crate::state::BasiliskStage::from_corruption(engine.state.system_corruption)
+                != crate::state::BasiliskStage::Dormant
+                && !engine.basilisk_awakening_played
+            {
+                ascii_art::play_basilisk_awakening(&mut rng);
+                engine.basilisk_awakening_played = true;
+            }
+
+            // Check for act transition and play splash
+            if let Some(new_act) = engine.check_act_transition() {
+                ascii_art::play_act_transition(&new_act, &mut rng);
+            }
         } else {
             skip_generation = false;
         }
@@ -71,6 +115,8 @@ fn main() {
             engine.state.global_tension,
             engine.intel_points,
             engine.max_intel_points,
+            engine.state.system_corruption,
+            &mut rng,
         );
         println!();
 
@@ -136,11 +182,17 @@ fn main() {
 
         // Display Documents
         for doc in &engine.pending_documents {
-            let color = if doc.is_encrypted {
-                ui::RED_ALERT
-            } else {
-                ui::TEAL
+            // Critical crisis gets a special header
+            if let Some(crate::state::CrisisUrgency::Critical(_)) = &doc.crisis_urgency {
+                ui::draw_critical_doc_header(&mut rng);
+            }
+
+            let color = match &doc.crisis_urgency {
+                Some(crate::state::CrisisUrgency::Critical(_)) => ui::RED_ALERT,
+                Some(crate::state::CrisisUrgency::High)        => ui::ORANGE,
+                _                                              => if doc.is_encrypted { ui::RED_ALERT } else { ui::TEAL },
             };
+
             println!(
                 "{} [ID: {}] CLASS: {} :: {}",
                 color, doc.id, doc.clearance_level, doc.timestamp
@@ -160,8 +212,13 @@ fn main() {
                 );
             } else {
                 let content = corrupt_text(&doc.content, engine.turn_count, &mut rng);
-                println!(" {}{}{}", ui::TEAL, content, ui::RESET);
+                println!(" {}{}{}", color, content, ui::RESET);
             }
+
+            if let Some(crate::state::CrisisUrgency::High) = &doc.crisis_urgency {
+                println!(" {}[ !! UNRESOLVED — ESCALATES NEXT TURN !! ]{}", ui::ORANGE, ui::RESET);
+            }
+
             println!("{}{}", ui::GREY_DIM, "─".repeat(60));
         }
         println!("{}", ui::RESET);
@@ -186,6 +243,7 @@ fn main() {
             ui::WHITE_BOLD,
             ui::RESET
         );
+        println!("  [11] {}review -n [NAME]{}", ui::WHITE_BOLD, ui::RESET);
 
         let directive;
         loop {
@@ -216,7 +274,8 @@ fn main() {
   analyze <ID>  - Verify document reliability
   consult <NAME>      - Ask advisor for counsel
   interrogate <NAME>  - Aggressively question advisor
-  trace <NAME>        - Trace signal origin to advisor{}",
+  trace <NAME>        - Trace signal origin to advisor
+  review <NAME>       - View advisor advice history{}",
                     ui::GREY_DIM,
                     ui::RESET
                 );
@@ -235,13 +294,12 @@ fn main() {
             let cleaned_cmd = command_str.trim_start_matches("-").to_string();
             command_str = cleaned_cmd;
 
-            let mut arg_id = None;
-            if parts.len() > args_start_idx {
-                arg_id = Some(parts[args_start_idx].to_string());
-            } else if parts.len() > 1 {
-                // Fallback for consult [name] where name is second part
-                arg_id = Some(parts[parts.len() - 1].to_string());
-            }
+            // Pick the last non-flag token after the command (handles -n, -t prefixes)
+            let arg_id = parts[args_start_idx..]
+                .iter()
+                .filter(|s| !s.starts_with('-'))
+                .last()
+                .map(|s| s.to_string());
 
             let d = match command_str.as_str() {
                 "1" | "escalate" | "esc" => Some(Directive::Escalate),
@@ -289,6 +347,28 @@ fn main() {
                         continue;
                     }
                 }
+                "review" => {
+                    if let Some(name) = arg_id {
+                        let name_lower = name.to_lowercase();
+                        let found = engine.state.advisors.iter().find(|a| {
+                            a.name.to_lowercase().contains(&name_lower)
+                        });
+                        if let Some(advisor) = found {
+                            println!("{}ADVICE HISTORY — {}:{}", ui::AMBER, advisor.name, ui::RESET);
+                            if advisor.advice_log.is_empty() {
+                                println!("  {}No consultations recorded.{}", ui::GREY_DIM, ui::RESET);
+                            }
+                            for (turn, text) in &advisor.advice_log {
+                                println!("  {}[Turn {:02}]{} {}", ui::GREY_DIM, turn, ui::RESET, text);
+                            }
+                        } else {
+                            println!("ERROR: Advisor '{}' not found.", name);
+                        }
+                    } else {
+                        println!("usage: review -n <advisor_name>");
+                    }
+                    continue;
+                }
                 "quit" | "exit" => std::process::exit(0),
                 _ => {
                     println!(
@@ -321,11 +401,44 @@ fn main() {
         }
 
         if engine.state.is_terminal() {
-            ui::clear_screen();
-            println!("{}GAME OVER{}", ui::RED_ALERT, ui::RESET);
+            let ending = engine.evaluate_ending()
+                .unwrap_or(crate::state::Ending::NuclearWinter);
+            let debrief = engine.build_debrief();
+            display_ending_and_debrief(&engine, &ending, &debrief, &mut rng, &input_mgr);
             break;
         }
+
+        // Also check non-fatal endings (e.g. ColdPeace from StandDown)
+        if engine.standdown_triggered {
+            if let Some(ending) = engine.evaluate_ending() {
+                let debrief = engine.build_debrief();
+                display_ending_and_debrief(&engine, &ending, &debrief, &mut rng, &input_mgr);
+                break;
+            }
+        }
     }
+}
+
+fn display_ending_and_debrief(
+    _engine: &GameEngine,
+    ending: &crate::state::Ending,
+    debrief: &crate::state::DebriefData,
+    rng: &mut SimpleRng,
+    input_mgr: &InputManager,
+) {
+    ascii_art::play_ending(ending, rng);
+
+    println!("\n{}╔══════════════════ DECLASSIFIED DEBRIEF ══════════════════╗{}", ui::AMBER, ui::RESET);
+    println!("{}  MOLE:             {:<20} STATUS: {}{}", ui::AMBER, debrief.mole_name,
+        if debrief.mole_caught { "NEUTRALIZED" } else { "ESCAPED" }, ui::RESET);
+    println!("{}  FINAL DEFCON:    {:.2}{}", ui::AMBER, debrief.final_tension, ui::RESET);
+    println!("{}  FINAL STABILITY: {:.2}{}", ui::AMBER, debrief.final_stability, ui::RESET);
+    println!("{}  CORRUPTION:      {:.2}{}", ui::AMBER, debrief.final_corruption, ui::RESET);
+    println!("{}  PEAK TENSION AT: TURN {:02}{}", ui::AMBER, debrief.peak_tension_turn, ui::RESET);
+    println!("{}╚═══════════════════════════════════════════════════════════╝{}", ui::AMBER, ui::RESET);
+
+    println!("\n{}[PRESS ENTER TO EXIT]{}", ui::GREY_DIM, ui::RESET);
+    let _ = input_mgr.read_line();
 }
 
 fn handle_red_phone_crisis(
@@ -389,6 +502,7 @@ fn handle_red_phone_crisis(
             mole_mut.suspicion = 0;
             mole_mut.is_mole = false;
         }
+        engine.mole_neutralized = true;
     } else {
         println!(
             "{}VOICE: PREMIER CHERNOV HERE. WE SEE YOUR BOMBERS. EXPLAIN YOURSELF OR WE LAUNCH.{}",

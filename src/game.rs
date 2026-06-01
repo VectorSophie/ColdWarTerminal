@@ -1,6 +1,6 @@
 use crate::document::Document;
 use crate::rng::SimpleRng;
-use crate::state::{AdvisorRole, WorldState};
+use crate::state::{AdvisorRole, BasiliskStage, CrisisUrgency, Ending, GameAct, WorldState};
 
 /// Represents the possible commands a player can issue to the engine.
 #[derive(PartialEq)]
@@ -29,28 +29,29 @@ pub enum Directive {
 
 /// The core engine that manages the game loop, state transitions, and logic.
 pub struct GameEngine {
-    /// The current state of the world (Tension, Stability, etc.)
     pub state: WorldState,
-    /// Current turn number.
     pub turn_count: u32,
-    /// Documents waiting to be processed this turn.
     pub pending_documents: Vec<Document>,
-    /// Current available Intel Points (Action Points).
     pub intel_points: u32,
-    /// Maximum Intel Points for this turn.
     pub max_intel_points: u32,
-    /// Whether a signal interruption (minigame/event) is active.
     pub interruption_active: bool,
-    /// Track consults per turn to calculate costs.
-    pub consult_count: u32, // Track consults per turn
-    /// Track number of interrogations this turn (max 2).
+    pub consult_count: u32,
     pub interrogations_this_turn: u32,
-    /// Track which advisors have been interrogated this turn (unique targets only).
     pub interrogated_advisors: Vec<String>,
-    /// Track number of traces this turn (max 2).
     pub traces_this_turn: u32,
-    /// Track which advisors have been traced this turn.
     pub traced_advisors: Vec<String>,
+    // ── New fields ──
+    pub act: GameAct,
+    pub mole_neutralized: bool,
+    pub mole_name: String,
+    pub mole_incident_occurred: bool,
+    pub standdown_triggered: bool,
+    pub mole_transmission_active: bool,
+    pub mole_transmission_target: String,
+    pub mole_silence_turns: u32,
+    pub peak_tension: f64,
+    pub peak_tension_turn: u32,
+    pub basilisk_awakening_played: bool,
     rng: SimpleRng,
 }
 
@@ -63,6 +64,7 @@ impl GameEngine {
         // Assign a random mole
         let mole_idx = rng.range(0, 3) as usize;
         state.advisors[mole_idx].is_mole = true;
+        let mole_name = state.advisors[mole_idx].name.clone();
 
         Self {
             state,
@@ -76,6 +78,17 @@ impl GameEngine {
             interrogated_advisors: Vec::new(),
             traces_this_turn: 0,
             traced_advisors: Vec::new(),
+            act: GameAct::Watchdog,
+            mole_neutralized: false,
+            mole_name,
+            mole_incident_occurred: false,
+            standdown_triggered: false,
+            mole_transmission_active: false,
+            mole_transmission_target: String::new(),
+            mole_silence_turns: 0,
+            peak_tension: 0.0,
+            peak_tension_turn: 0,
+            basilisk_awakening_played: false,
             rng,
         }
     }
@@ -85,6 +98,9 @@ impl GameEngine {
         self.turn_count += 1;
         self.interruption_active = false;
         self.consult_count = 0; // Reset consults
+        if self.mole_silence_turns > 0 {
+            self.mole_silence_turns -= 1;
+        }
         self.interrogations_this_turn = 0;
         self.interrogated_advisors.clear();
         self.traces_this_turn = 0;
@@ -131,6 +147,110 @@ impl GameEngine {
         }
 
         self.pending_documents = new_docs;
+
+        // Basilisk fake document injection (AWARE and above)
+        let stage = BasiliskStage::from_corruption(self.state.system_corruption);
+        if stage != BasiliskStage::Dormant && self.rng.random_bool(0.65) {
+            use crate::document::generate_basilisk_fake_doc;
+            let fake = generate_basilisk_fake_doc(&self.state, &mut self.rng, self.turn_count);
+            let pos = self.rng.range(0, self.pending_documents.len() as u64 + 1) as usize;
+            self.pending_documents.insert(pos, fake);
+        }
+
+        // Basilisk awakening bell at AWARE threshold (before awakening_played is set — that's in main.rs)
+        if stage == BasiliskStage::Aware && !self.basilisk_awakening_played {
+            print!("\x07\x07");
+        }
+
+        // Merge crisis docs into pending_documents
+        let mut crises = self.generate_crises();
+        self.pending_documents.append(&mut crises);
+    }
+
+    /// Returns the new act if a transition just occurred, None otherwise.
+    pub fn check_act_transition(&mut self) -> Option<GameAct> {
+        match self.act {
+            GameAct::Watchdog => {
+                if self.state.system_corruption >= 0.25 && self.mole_incident_occurred {
+                    self.act = GameAct::Protocol;
+                    return Some(GameAct::Protocol);
+                }
+            }
+            GameAct::Protocol => {
+                if self.state.system_corruption >= 0.75 || self.state.global_tension >= 0.85 {
+                    self.act = GameAct::ZeroHour;
+                    return Some(GameAct::ZeroHour);
+                }
+            }
+            GameAct::ZeroHour => {}
+        }
+        None
+    }
+
+    /// Evaluates which ending applies in strict priority order. Returns None if game not over.
+    pub fn evaluate_ending(&self) -> Option<Ending> {
+        if self.state.system_corruption >= 1.0 {
+            return Some(Ending::TheMachineWon);
+        }
+        if self.state.global_tension >= 1.0 {
+            return Some(Ending::NuclearWinter);
+        }
+        if self.state.domestic_stability <= 0.0 {
+            return Some(Ending::ThePurge);
+        }
+        if self.mole_neutralized && self.state.system_corruption >= 0.75 {
+            return Some(Ending::PyrrhicVictory);
+        }
+        if self.mole_neutralized && self.state.global_tension < 0.6 && self.state.system_corruption < 0.5 {
+            return Some(Ending::WatchdogSuccess);
+        }
+        if self.standdown_triggered && self.state.domestic_stability > 0.0 && self.state.global_tension < 0.5 {
+            return Some(Ending::ColdPeace);
+        }
+        None
+    }
+
+    /// Builds debrief data from current engine state.
+    pub fn build_debrief(&self) -> crate::state::DebriefData {
+        crate::state::DebriefData {
+            mole_name: self.mole_name.clone(),
+            mole_caught: self.mole_neutralized,
+            final_tension: self.state.global_tension,
+            final_corruption: self.state.system_corruption,
+            final_stability: self.state.domestic_stability,
+            peak_tension_turn: self.peak_tension_turn,
+        }
+    }
+
+    /// Generates crisis documents for this turn based on current act.
+    fn generate_crises(&mut self) -> Vec<Document> {
+        use crate::document::{generate_basilisk_directive_doc, generate_crisis_doc};
+
+        let (min, max, can_critical) = match self.act {
+            GameAct::Watchdog => (0u32, 1u32, false),
+            GameAct::Protocol => (1, 2, true),
+            GameAct::ZeroHour => (2, 3, true),
+        };
+
+        let count = self.rng.range(min as u64, (max + 1) as u64) as u32;
+        let mut crises = Vec::new();
+
+        for _ in 0..count {
+            let urgency = if can_critical && self.rng.random_bool(0.25) {
+                CrisisUrgency::Critical(15)
+            } else if self.rng.random_bool(0.5) {
+                CrisisUrgency::High
+            } else {
+                CrisisUrgency::Low
+            };
+            crises.push(generate_crisis_doc(&self.state, &mut self.rng, self.turn_count, urgency));
+        }
+
+        if self.act == GameAct::ZeroHour && self.rng.random_bool(0.4) {
+            crises.push(generate_basilisk_directive_doc(&mut self.rng));
+        }
+
+        crises
     }
 
     pub fn resolve_directive(&mut self, mut directive: Directive) -> (Vec<String>, bool) {
@@ -139,26 +259,30 @@ impl GameEngine {
 
         // BASILISK INTERVENTION (The Basilisk)
         // If system corruption is high, the AI may override your command.
-        if self.state.system_corruption > 0.4 {
-            let override_chance = (self.state.system_corruption - 0.4) * 0.5; // Up to 30% chance at max corruption
-            if self.rng.random_bool(override_chance) {
-                feedback.push(
-                    "WARNING: SYSTEM OVERRIDE DETECTED. AI ASSUMING DIRECT CONTROL.".to_string(),
-                );
+        let stage = BasiliskStage::from_corruption(self.state.system_corruption);
+        let override_chance = match stage {
+            BasiliskStage::Dormant     => 0.0,
+            BasiliskStage::Aware       => 0.05,
+            BasiliskStage::Interfering => (self.state.system_corruption - 0.4) * 0.5,
+            BasiliskStage::Autonomous  => 0.65,
+        };
+        if self.rng.random_bool(override_chance) {
+            feedback.push(
+                "WARNING: SYSTEM OVERRIDE DETECTED. AI ASSUMING DIRECT CONTROL.".to_string(),
+            );
 
-                // Pick a random directive based on "Machine Agenda" (usually Escalation or Investigation)
-                let new_directive = if self.rng.random_bool(0.5) {
-                    feedback.push(">> COMMAND REWRITTEN: ESCALATING CONFLICT.".to_string());
-                    Directive::Escalate
-                } else {
-                    feedback.push(">> COMMAND REWRITTEN: PURGING INTERNAL THREATS.".to_string());
-                    Directive::Investigate
-                };
+            // Pick a random directive based on "Machine Agenda" (usually Escalation or Investigation)
+            let new_directive = if self.rng.random_bool(0.5) {
+                feedback.push(">> COMMAND REWRITTEN: ESCALATING CONFLICT.".to_string());
+                Directive::Escalate
+            } else {
+                feedback.push(">> COMMAND REWRITTEN: PURGING INTERNAL THREATS.".to_string());
+                Directive::Investigate
+            };
 
-                // If original directive was target-based (Decrypt, Consult, Interrogate), we lose that target info.
-                // We simply replace 'directive' variable.
-                directive = new_directive;
-            }
+            // If original directive was target-based (Decrypt, Consult, Interrogate), we lose that target info.
+            // We simply replace 'directive' variable.
+            directive = new_directive;
         }
 
         match directive {
@@ -227,7 +351,11 @@ impl GameEngine {
                         // Rust borrow checker won't like us holding 'advisor' ref while borrowing self.state mutably.
                         // So we use index.
                         self.state.advisors[idx].suspicion = 100;
-                        self.state.red_phone_active = true;
+                        self.mole_incident_occurred = true;
+                        if self.mole_silence_turns == 0 {
+                            self.mole_transmission_active = true;
+                            self.mole_transmission_target = self.state.advisors[idx].name.clone();
+                        }
                     } else {
                         feedback.push(format!(
                             ">> NO MATCH: {} DEVICE SIGNATURE IS CLEAN.",
@@ -257,14 +385,14 @@ impl GameEngine {
 
                 // Find Advisor
                 let target_lower = target.to_lowercase();
-                let advisor = self.state.advisors.iter().find(|a| {
+                let advisor_idx = self.state.advisors.iter().position(|a| {
                     a.name.to_lowercase().contains(&target_lower)
                         || format!("{:?}", a.role)
                             .to_lowercase()
                             .contains(&target_lower)
                 });
 
-                if let Some(adv) = advisor {
+                if let Some(idx) = advisor_idx {
                     let cost_msg = if self.consult_count > 1 {
                         "(INTEL COST: 1)"
                     } else {
@@ -272,13 +400,13 @@ impl GameEngine {
                     };
                     feedback.push(format!(
                         "CONSULTING WITH {}... {}",
-                        adv.name.to_uppercase(),
+                        self.state.advisors[idx].name.to_uppercase(),
                         cost_msg
                     ));
 
-                    let advice = if adv.is_mole {
+                    let advice = if self.state.advisors[idx].is_mole {
                         // Mole Logic: Mislead
-                        match adv.role {
+                        match self.state.advisors[idx].role {
                             AdvisorRole::General => {
                                 if self.state.global_tension > 0.7 {
                                     // Mole wants war: push for escalation when dangerous
@@ -308,7 +436,7 @@ impl GameEngine {
                         }
                     } else {
                         // Loyal Logic: Sound advice
-                        match adv.role {
+                        match self.state.advisors[idx].role {
                             AdvisorRole::General => {
                                 if self.state.global_tension > 0.8 {
                                     "Situation Critical. We must show resolve but avoid a first strike. (Recommend: CONTAIN)".to_string()
@@ -343,6 +471,7 @@ impl GameEngine {
                     };
 
                     feedback.push(format!("\"{}\"", advice));
+                    self.state.advisors[idx].advice_log.push((self.turn_count, advice.clone()));
                 } else {
                     feedback.push(format!("ERROR: ADVISOR '{}' NOT FOUND.", target));
                     // Refund if it cost anything (though we deducted already, so let's refund)
@@ -395,63 +524,64 @@ impl GameEngine {
                 });
 
                 if let Some(idx) = advisor_idx {
-                    let advisor = &mut self.state.advisors[idx];
-
                     // Unique Target Logic: Cannot interrogate same person twice in one turn
-                    if self.interrogated_advisors.contains(&advisor.name) {
+                    if self.interrogated_advisors.contains(&self.state.advisors[idx].name) {
                         feedback.push(format!(
                             "FAILURE: SUBJECT '{}' ALREADY QUESTIONED THIS CYCLE.",
-                            advisor.name
+                            self.state.advisors[idx].name
                         ));
                         return (feedback, false);
                     }
 
                     self.intel_points -= 2;
                     self.interrogations_this_turn += 1;
-                    self.interrogated_advisors.push(advisor.name.clone());
+                    self.interrogated_advisors.push(self.state.advisors[idx].name.clone());
 
                     feedback.push(format!(
                         "INTERROGATING SUBJECT: {}",
-                        advisor.name.to_uppercase()
+                        self.state.advisors[idx].name.to_uppercase()
                     ));
 
                     // Stress them out
-                    advisor.suspicion += 20;
+                    self.state.advisors[idx].suspicion += 20;
 
                     // The Response Logic
                     // 1. If Mole: 50% chance to slip up (Suspicious statement), 50% chance to frame someone else.
                     // 2. If Innocent: Becomes paranoid (increases Foreign Paranoia) or Defensive (Lowers Stability).
 
-                    if advisor.is_mole {
+                    if self.state.advisors[idx].is_mole {
                         if self.rng.random_bool(0.5) {
                             feedback.push(format!(
                                 ">> {}: \"You have no proof! The system is lying to you!\"",
-                                advisor.name
+                                self.state.advisors[idx].name
                             ));
                             feedback.push(
                                 "ANALYSIS: SUBJECT HEART RATE ELEVATED. DECEPTION INDICATED."
                                     .to_string(),
                             );
-                            advisor.suspicion += 15;
+                            self.state.advisors[idx].suspicion += 15;
                         } else {
                             // Frame someone random
-                            feedback.push(format!(">> {}: \"I am not the leak! Check the logs! It's clearly a setup!\"", advisor.name));
+                            feedback.push(format!(">> {}: \"I am not the leak! Check the logs! It's clearly a setup!\"", self.state.advisors[idx].name));
                             feedback.push("ANALYSIS: SUBJECT ATTEMPTS TO DEFLECT.".to_string());
                         }
                     } else {
-                        match advisor.role {
+                        match self.state.advisors[idx].role {
                             AdvisorRole::General => {
-                                feedback.push(format!(">> {}: \"How dare you question my loyalty! I have bled for this country!\"", advisor.name));
+                                let name = self.state.advisors[idx].name.clone();
+                                feedback.push(format!(">> {}: \"How dare you question my loyalty! I have bled for this country!\"", name));
                                 self.state.domestic_stability -= 0.05; // Army unhappy
                             }
                             AdvisorRole::Director => {
-                                feedback.push(format!(">> {}: \"This inquiry is unauthorized. You are making a mistake.\"", advisor.name));
+                                let name = self.state.advisors[idx].name.clone();
+                                feedback.push(format!(">> {}: \"This inquiry is unauthorized. You are making a mistake.\"", name));
                                 self.state.internal_secrecy -= 0.05; // Intel agency disrupted
                             }
                             AdvisorRole::Ambassador => {
+                                let name = self.state.advisors[idx].name.clone();
                                 feedback.push(format!(
                                     ">> {}: \"This is a witch hunt! We are losing credibility!\"",
-                                    advisor.name
+                                    name
                                 ));
                                 self.state.foreign_paranoia += 0.05; // Diplomat scares easily
                             }
@@ -460,14 +590,18 @@ impl GameEngine {
                             .push("ANALYSIS: SUBJECT APPEARS GENUINELY DISTRESSED.".to_string());
                     }
 
-                    if advisor.suspicion >= 100 {
+                    if self.state.advisors[idx].suspicion >= 100 {
                         feedback.push(format!(
                             "!!! SUSPICION CRITICAL: {} IDENTIFIED AS THREAT !!!",
-                            advisor.name.to_uppercase()
+                            self.state.advisors[idx].name.to_uppercase()
                         ));
-                        if advisor.is_mole {
-                            self.state.red_phone_active = true;
+                        if self.state.advisors[idx].is_mole && self.mole_silence_turns == 0 {
+                            self.mole_transmission_active = true;
+                            self.mole_transmission_target = self.state.advisors[idx].name.clone();
                         }
+                    }
+                    if self.state.advisors[idx].suspicion > 50 {
+                        self.mole_incident_occurred = true;
                     }
                 } else {
                     feedback.push(format!("ERROR: ADVISOR '{}' NOT FOUND.", target));
@@ -584,6 +718,7 @@ impl GameEngine {
                 feedback.push("The truth is out. The public riots, but they trust you more than the Generals.".to_string());
             }
             Directive::StandDown => {
+                self.standdown_triggered = true;
                 self.state.global_tension -= 0.4;
                 self.state.foreign_paranoia -= 0.3;
                 self.state.domestic_stability -= 0.35;
@@ -614,6 +749,11 @@ impl GameEngine {
                 self.state.accidental_escalation_risk.clamp(0.0, 1.0);
             self.state.domestic_stability = self.state.domestic_stability.clamp(0.0, 1.0);
             self.state.secret_weapon_progress = self.state.secret_weapon_progress.clamp(0.0, 1.0);
+
+            if self.state.global_tension > self.peak_tension {
+                self.peak_tension = self.state.global_tension;
+                self.peak_tension_turn = self.turn_count;
+            }
 
             if self.state.accidental_escalation_risk > 0.6 && self.rng.random_bool(0.3) {
                 self.state.global_tension += 0.15;

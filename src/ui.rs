@@ -1,3 +1,4 @@
+use crate::input::InputManager;
 use crate::rng::SimpleRng;
 use std::io::{self, Write};
 use std::thread;
@@ -75,7 +76,7 @@ pub fn type_text(text: &str, speed_ms: u64, color: &str, glitch_chance: f64, rng
 }
 
 /// Draws the main HUD header.
-pub fn draw_hud(turn: u32, tension: f64, intel: u32, max_intel: u32) {
+pub fn draw_hud(turn: u32, tension: f64, intel: u32, max_intel: u32, corruption: f64, rng: &mut SimpleRng) {
     let width = 60;
     let inner_width = width - 2;
 
@@ -124,13 +125,9 @@ pub fn draw_hud(turn: u32, tension: f64, intel: u32, max_intel: u32) {
     };
 
     // Top Border
-    println!(
-        "{}{}{}{}",
-        TEAL,
-        TL_CORNER,
-        H_LINE.to_string().repeat(inner_width),
-        TR_CORNER
-    );
+    let tl = if corruption >= 0.75 && rng.random_bool(0.3) { '?' } else { TL_CORNER };
+    let tr = if corruption >= 0.75 && rng.random_bool(0.3) { '?' } else { TR_CORNER };
+    println!("{}{}{}{}", TEAL, tl, H_LINE.to_string().repeat(inner_width), tr);
 
     // Info Line construction
     let tension_color = if tension > 0.8 {
@@ -146,19 +143,61 @@ pub fn draw_hud(turn: u32, tension: f64, intel: u32, max_intel: u32) {
     // Content
     print!("{}{}", " ".repeat(pad_left), date_str);
     print!("{}", " ".repeat(gap1));
-    print!("DEFCON: {}{:.2}{}", tension_color, tension, TEAL); // Manual print to handle color
+    if corruption >= 0.25 && rng.random_bool(0.15) {
+        let scrambled = format!("{:.2}", tension)
+            .chars()
+            .map(|c| if c.is_ascii_digit() && rng.random_bool(0.5) { '#' } else { c })
+            .collect::<String>();
+        print!("DEFCON: {}{}{}", tension_color, scrambled, TEAL);
+    } else {
+        print!("DEFCON: {}{:.2}{}", tension_color, tension, TEAL);
+    } // Manual print to handle color
     print!("{}", " ".repeat(gap2));
     print!("{}{}", intel_str, " ".repeat(pad_right));
 
     println!("{}{}{}", TEAL, V_LINE, RESET); // End border
 
     // Bottom Border
+    let bl = if corruption >= 0.75 && rng.random_bool(0.3) { '?' } else { BL_CORNER };
+    let br = if corruption >= 0.75 && rng.random_bool(0.3) { '?' } else { BR_CORNER };
+    println!("{}{}{}{}{}", TEAL, bl, H_LINE.to_string().repeat(inner_width), br, RESET);
+}
+
+/// Displays a live countdown, ringing the bell each second.
+/// Returns the player's trimmed input if they respond in time, or None on timeout.
+pub fn run_countdown(seconds: u32, label: &str, input_mgr: &InputManager) -> Option<String> {
+    let mut stdout = io::stdout();
+    for remaining in (1..=seconds).rev() {
+        print!(
+            "\r{}[ !! {} — {} SECONDS REMAINING !! ]{}   ",
+            RED_ALERT, label, remaining, RESET
+        );
+        print!("\x07");
+        stdout.flush().unwrap();
+        if let Some(line) = input_mgr.try_read_line(Duration::from_secs(1)) {
+            let trimmed = line.trim().to_string();
+            if !trimmed.is_empty() {
+                println!();
+                return Some(trimmed);
+            }
+        }
+    }
     println!(
-        "{}{}{}{}{}",
-        TEAL,
-        BL_CORNER,
-        H_LINE.to_string().repeat(inner_width),
-        BR_CORNER,
-        RESET
+        "\n{}[ !! {} — TIMED OUT. CONSEQUENCE APPLIED. !! ]{}",
+        RED_ALERT, label, RESET
     );
+    None
+}
+
+/// Renders a flashing border line for Critical crisis documents.
+pub fn draw_critical_doc_header(rng: &mut SimpleRng) {
+    let glitch = if rng.random_bool(0.4) { "█" } else { "!" };
+    println!(
+        "{}{}{}{}",
+        RED_ALERT,
+        glitch.repeat(3),
+        " CRITICAL ALERT — IMMEDIATE ACTION REQUIRED ",
+        glitch.repeat(3),
+    );
+    println!("{}", RESET);
 }

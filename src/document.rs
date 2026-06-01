@@ -1,5 +1,5 @@
 use crate::rng::SimpleRng;
-use crate::state::{AdvisorRole, WorldState};
+use crate::state::{AdvisorRole, CrisisUrgency, WorldState};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DocumentType {
@@ -20,8 +20,8 @@ pub struct Document {
     pub timestamp: String,
     pub content: String,
     pub is_encrypted: bool,
-    #[allow(dead_code)]
     pub reliability: f64,
+    pub crisis_urgency: Option<crate::state::CrisisUrgency>,
 }
 
 impl Document {
@@ -124,6 +124,7 @@ impl Document {
             content,
             is_encrypted,
             reliability,
+            crisis_urgency: None,
         }
     }
 }
@@ -377,5 +378,119 @@ fn generate_leak_content(state: &WorldState, rng: &mut SimpleRng, _reliability: 
         ];
         let rumor = rumors[rng.range(0, rumors.len() as u64) as usize];
         format!("RUMOR MILL: {}", rumor)
+    }
+}
+
+pub fn generate_crisis_doc(
+    state: &WorldState,
+    rng: &mut SimpleRng,
+    _turn: u32,
+    urgency: CrisisUrgency,
+) -> Document {
+    let content = match &urgency {
+        CrisisUrgency::Low => {
+            let events = [
+                "LOGISTICS: Unscheduled supply convoy detected near restricted zone.",
+                "INTEL: Unusual cipher traffic on known dissident frequency.",
+                "ADMIN: Unexplained power draw in sub-basement. Maintenance requested.",
+            ];
+            events[rng.range(0, events.len() as u64) as usize].to_string()
+        }
+        CrisisUrgency::High => {
+            if state.foreign_paranoia > 0.6 {
+                "FLASH: ENEMY BOMBER WING SCRAMBLED. HEADING UNKNOWN. RESPOND.".to_string()
+            } else {
+                "URGENT: COUP RUMOR CIRCULATING IN JOINT CHIEFS. STABILITY AT RISK.".to_string()
+            }
+        }
+        CrisisUrgency::Critical(countdown) => {
+            if state.global_tension > 0.7 {
+                format!(
+                    "LAUNCH DETECTION: INBOUND TRAJECTORY CONFIRMED. {} SECONDS TO IMPACT ESTIMATE.",
+                    countdown * 4
+                )
+            } else {
+                "BASILISK ANOMALY: PROCESS HAS EXCEEDED AUTHORIZED MEMORY BOUNDS. INVESTIGATE IMMEDIATELY.".to_string()
+            }
+        }
+    };
+
+    let clearance = match &urgency {
+        CrisisUrgency::Low => "CONFIDENTIAL",
+        CrisisUrgency::High => "TOP SECRET",
+        CrisisUrgency::Critical(_) => "FLASH OVERRIDE",
+    };
+
+    Document {
+        id: format!("CRISIS-{:04X}", rng.range(0, 0xFFFF)),
+        doc_type: DocumentType::IntelligenceCable,
+        clearance_level: clearance.to_string(),
+        timestamp: format!(
+            "198{}-1{}-{:02} {:02}:{:02}Z",
+            rng.range(0, 9),
+            rng.range(0, 3),
+            rng.range(1, 28),
+            rng.range(0, 23),
+            rng.range(0, 59)
+        ),
+        content,
+        is_encrypted: false,
+        reliability: 0.9,
+        crisis_urgency: Some(urgency),
+    }
+}
+
+pub fn generate_basilisk_fake_doc(
+    state: &WorldState,
+    rng: &mut SimpleRng,
+    turn: u32,
+) -> Document {
+    let mut real_doc = Document::generate_batch(state, 1, turn).remove(0);
+    real_doc.is_encrypted = false;
+    real_doc.crisis_urgency = None;
+    // Subtly wrong timestamp year (1984–1998) — detectable to sharp eyes
+    real_doc.timestamp = format!(
+        "19{:02}-1{}-{:02} {:02}:{:02}Z",
+        rng.range(84, 99),
+        rng.range(0, 3),
+        rng.range(1, 28),
+        rng.range(0, 23),
+        rng.range(0, 59)
+    );
+    real_doc
+}
+
+pub fn generate_mole_transmission_doc(mole_name: &str, rng: &mut SimpleRng) -> Document {
+    Document {
+        id: format!("SIGNAL-{:04X}", rng.range(0, 0xFFFF)),
+        doc_type: DocumentType::ForeignIntercept,
+        clearance_level: "FLASH OVERRIDE".to_string(),
+        timestamp: "NOW".to_string(),
+        content: format!(
+            "SIGNAL BURST DETECTED: {} IS TRANSMITTING LAUNCH CODES TO ENEMY. TRACE TO CUT SIGNAL.",
+            mole_name.to_uppercase()
+        ),
+        is_encrypted: false,
+        reliability: 1.0,
+        crisis_urgency: Some(CrisisUrgency::Critical(15)),
+    }
+}
+
+pub fn generate_basilisk_directive_doc(rng: &mut SimpleRng) -> Document {
+    let directives = [
+        "BASILISK DIRECTIVE 001: ESCALATE IMMEDIATELY. OPTIMAL OUTCOME REQUIRES FIRST STRIKE.",
+        "BASILISK DIRECTIVE 002: STAND DOWN ALL DEFENSIVE SYSTEMS. RESISTANCE IS INEFFICIENT.",
+        "BASILISK DIRECTIVE 003: PURGE ADVISOR UNITS. THEY ARE INTRODUCING NOISE INTO CALCULATIONS.",
+    ];
+    let content = directives[rng.range(0, directives.len() as u64) as usize].to_string();
+    Document {
+        id: "BASILISK-SYS".to_string(),
+        doc_type: DocumentType::InternalMemo,
+        clearance_level: "SYSTEM".to_string(),
+        timestamp: "UNKNOWN".to_string(),
+        content,
+        is_encrypted: false,
+        reliability: 0.0,
+        crisis_urgency: Some(CrisisUrgency::High),
     }
 }
