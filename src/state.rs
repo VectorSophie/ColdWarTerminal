@@ -46,6 +46,7 @@ pub enum Ending {
     ColdPeace,
 }
 
+#[derive(Debug, Clone)]
 pub struct DebriefData {
     pub mole_name: String,
     pub mole_caught: bool,
