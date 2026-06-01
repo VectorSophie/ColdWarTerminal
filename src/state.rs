@@ -5,12 +5,63 @@ pub enum AdvisorRole {
     Ambassador,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum GameAct {
+    Watchdog,
+    Protocol,
+    ZeroHour,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BasiliskStage {
+    Dormant,
+    Aware,
+    Interfering,
+    Autonomous,
+}
+
+impl BasiliskStage {
+    pub fn from_corruption(c: f64) -> Self {
+        if c < 0.25 { Self::Dormant }
+        else if c < 0.50 { Self::Aware }
+        else if c < 0.75 { Self::Interfering }
+        else { Self::Autonomous }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CrisisUrgency {
+    Low,
+    High,
+    Critical(u32), // countdown seconds
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Ending {
+    TheMachineWon,
+    NuclearWinter,
+    ThePurge,
+    PyrrhicVictory,
+    WatchdogSuccess,
+    ColdPeace,
+}
+
+pub struct DebriefData {
+    pub mole_name: String,
+    pub mole_caught: bool,
+    pub final_tension: f64,
+    pub final_corruption: f64,
+    pub final_stability: f64,
+    pub peak_tension_turn: u32,
+}
+
 #[derive(Debug, Clone)]
 pub struct Advisor {
     pub name: String,
     pub role: AdvisorRole,
     pub suspicion: u32, // 0 to 100
     pub is_mole: bool,
+    pub advice_log: Vec<(u32, String)>, // (turn_number, advice_text)
 }
 
 #[derive(Debug, Clone)]
@@ -50,18 +101,21 @@ impl WorldState {
                 role: AdvisorRole::General,
                 suspicion: 0,
                 is_mole: false,
+                advice_log: Vec::new(),
             },
             Advisor {
                 name: "Director K.".to_string(),
                 role: AdvisorRole::Director,
                 suspicion: 0,
                 is_mole: false,
+                advice_log: Vec::new(),
             },
             Advisor {
                 name: "Amb. Sterling".to_string(),
                 role: AdvisorRole::Ambassador,
                 suspicion: 0,
                 is_mole: false,
+                advice_log: Vec::new(),
             },
         ];
 
@@ -82,6 +136,8 @@ impl WorldState {
     }
 
     pub fn is_terminal(&self) -> bool {
-        self.global_tension >= 1.0 || self.domestic_stability <= 0.0
+        self.global_tension >= 1.0
+            || self.domestic_stability <= 0.0
+            || self.system_corruption >= 1.0
     }
 }
