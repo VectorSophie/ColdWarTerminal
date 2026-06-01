@@ -1,3 +1,4 @@
+mod ascii_art;
 mod document;
 mod game;
 mod input;
