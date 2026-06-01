@@ -70,12 +70,19 @@ fn main() {
             println!("!!! {} !!!", doc.content);
             println!("{}", ui::RESET);
 
+            print!("{}root@command:~$ {}", ui::TEAL, ui::RESET);
+            stdout.flush().unwrap();
             let response = ui::run_countdown(15, "SIGNAL INTERCEPT", &input_mgr);
 
             let intercepted = if let Some(ref cmd) = response {
                 let parts: Vec<&str> = cmd.split_whitespace().collect();
                 let base = parts.first().map(|s| s.trim_start_matches('-').to_lowercase()).unwrap_or_default();
-                let arg = parts.last().map(|s| s.to_lowercase()).unwrap_or_default();
+                // Find the last non-flag token as the target name
+                let arg = parts.iter()
+                    .filter(|s| !s.starts_with('-'))
+                    .last()
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_default();
                 let first_word = target.to_lowercase();
                 let first_word = first_word.split_whitespace().next().unwrap_or("");
                 (base == "trace" || base == "traceroute") && arg.contains(first_word)
@@ -117,6 +124,8 @@ fn main() {
             engine.state.global_tension,
             engine.intel_points,
             engine.max_intel_points,
+            engine.state.system_corruption,
+            &mut rng,
         );
         println!();
 
