@@ -294,13 +294,12 @@ fn main() {
             let cleaned_cmd = command_str.trim_start_matches("-").to_string();
             command_str = cleaned_cmd;
 
-            let mut arg_id = None;
-            if parts.len() > args_start_idx {
-                arg_id = Some(parts[args_start_idx].to_string());
-            } else if parts.len() > 1 {
-                // Fallback for consult [name] where name is second part
-                arg_id = Some(parts[parts.len() - 1].to_string());
-            }
+            // Pick the last non-flag token after the command (handles -n, -t prefixes)
+            let arg_id = parts[args_start_idx..]
+                .iter()
+                .filter(|s| !s.starts_with('-'))
+                .last()
+                .map(|s| s.to_string());
 
             let d = match command_str.as_str() {
                 "1" | "escalate" | "esc" => Some(Directive::Escalate),
