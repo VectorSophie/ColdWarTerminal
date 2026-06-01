@@ -402,11 +402,44 @@ fn main() {
         }
 
         if engine.state.is_terminal() {
-            ui::clear_screen();
-            println!("{}GAME OVER{}", ui::RED_ALERT, ui::RESET);
+            let ending = engine.evaluate_ending()
+                .unwrap_or(crate::state::Ending::NuclearWinter);
+            let debrief = engine.build_debrief();
+            display_ending_and_debrief(&engine, &ending, &debrief, &mut rng, &input_mgr);
             break;
         }
+
+        // Also check non-fatal endings (e.g. ColdPeace from StandDown)
+        if engine.standdown_triggered {
+            if let Some(ending) = engine.evaluate_ending() {
+                let debrief = engine.build_debrief();
+                display_ending_and_debrief(&engine, &ending, &debrief, &mut rng, &input_mgr);
+                break;
+            }
+        }
     }
+}
+
+fn display_ending_and_debrief(
+    _engine: &GameEngine,
+    ending: &crate::state::Ending,
+    debrief: &crate::state::DebriefData,
+    rng: &mut SimpleRng,
+    input_mgr: &InputManager,
+) {
+    ascii_art::play_ending(ending, rng);
+
+    println!("\n{}╔══════════════════ DECLASSIFIED DEBRIEF ══════════════════╗{}", ui::AMBER, ui::RESET);
+    println!("{}  MOLE:             {:<20} STATUS: {}{}", ui::AMBER, debrief.mole_name,
+        if debrief.mole_caught { "NEUTRALIZED" } else { "ESCAPED" }, ui::RESET);
+    println!("{}  FINAL DEFCON:    {:.2}{}", ui::AMBER, debrief.final_tension, ui::RESET);
+    println!("{}  FINAL STABILITY: {:.2}{}", ui::AMBER, debrief.final_stability, ui::RESET);
+    println!("{}  CORRUPTION:      {:.2}{}", ui::AMBER, debrief.final_corruption, ui::RESET);
+    println!("{}  PEAK TENSION AT: TURN {:02}{}", ui::AMBER, debrief.peak_tension_turn, ui::RESET);
+    println!("{}╚═══════════════════════════════════════════════════════════╝{}", ui::AMBER, ui::RESET);
+
+    println!("\n{}[PRESS ENTER TO EXIT]{}", ui::GREY_DIM, ui::RESET);
+    let _ = input_mgr.read_line();
 }
 
 fn handle_red_phone_crisis(
