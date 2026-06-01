@@ -59,6 +59,51 @@ fn main() {
             engine.state.red_phone_active = false;
         }
 
+        // Mole transmission interception window
+        if engine.mole_transmission_active {
+            use crate::document::generate_mole_transmission_doc;
+            let target = engine.mole_transmission_target.clone();
+            let doc = generate_mole_transmission_doc(&target, &mut rng);
+
+            ui::clear_screen();
+            println!("{}", ui::RED_ALERT);
+            println!("!!! {} !!!", doc.content);
+            println!("{}", ui::RESET);
+
+            let response = ui::run_countdown(15, "SIGNAL INTERCEPT", &input_mgr);
+
+            let intercepted = if let Some(ref cmd) = response {
+                let parts: Vec<&str> = cmd.split_whitespace().collect();
+                let base = parts.first().map(|s| s.trim_start_matches('-').to_lowercase()).unwrap_or_default();
+                let arg = parts.last().map(|s| s.to_lowercase()).unwrap_or_default();
+                let first_word = target.to_lowercase();
+                let first_word = first_word.split_whitespace().next().unwrap_or("");
+                (base == "trace" || base == "traceroute") && arg.contains(first_word)
+            } else {
+                false
+            };
+
+            engine.mole_transmission_active = false;
+            engine.mole_transmission_target = String::new();
+
+            if intercepted {
+                println!("{}SIGNAL CUT. {} IN CUSTODY.{}", ui::TEAL, target.to_uppercase(), ui::RESET);
+                engine.state.red_phone_active = true;
+            } else {
+                println!("{}TRANSMISSION COMPLETE. ENEMY HAS THE CODES.{}", ui::RED_ALERT, ui::RESET);
+                if let Some(mole) = engine.state.advisors.iter_mut().find(|a| a.name == target) {
+                    mole.suspicion = 60;
+                }
+                engine.state.global_tension += 0.2;
+                engine.state.global_tension = engine.state.global_tension.clamp(0.0, 1.0);
+                engine.mole_silence_turns = 2;
+            }
+
+            println!("\n{}[PRESS ENTER TO CONTINUE]{}", ui::TEAL, ui::RESET);
+            let _ = input_mgr.read_line();
+            skip_generation = true;
+        }
+
         if !skip_generation {
             engine.start_turn();
         } else {
@@ -187,6 +232,7 @@ fn main() {
             ui::WHITE_BOLD,
             ui::RESET
         );
+        println!("  [11] {}review -n [NAME]{}", ui::WHITE_BOLD, ui::RESET);
 
         let directive;
         loop {
@@ -217,7 +263,8 @@ fn main() {
   analyze <ID>  - Verify document reliability
   consult <NAME>      - Ask advisor for counsel
   interrogate <NAME>  - Aggressively question advisor
-  trace <NAME>        - Trace signal origin to advisor{}",
+  trace <NAME>        - Trace signal origin to advisor
+  review <NAME>       - View advisor advice history{}",
                     ui::GREY_DIM,
                     ui::RESET
                 );
@@ -289,6 +336,28 @@ fn main() {
                         println!("usage: interrogate -n <advisor_name>");
                         continue;
                     }
+                }
+                "review" => {
+                    if let Some(name) = arg_id {
+                        let name_lower = name.to_lowercase();
+                        let found = engine.state.advisors.iter().find(|a| {
+                            a.name.to_lowercase().contains(&name_lower)
+                        });
+                        if let Some(advisor) = found {
+                            println!("{}ADVICE HISTORY — {}:{}", ui::AMBER, advisor.name, ui::RESET);
+                            if advisor.advice_log.is_empty() {
+                                println!("  {}No consultations recorded.{}", ui::GREY_DIM, ui::RESET);
+                            }
+                            for (turn, text) in &advisor.advice_log {
+                                println!("  {}[Turn {:02}]{} {}", ui::GREY_DIM, turn, ui::RESET, text);
+                            }
+                        } else {
+                            println!("ERROR: Advisor '{}' not found.", name);
+                        }
+                    } else {
+                        println!("usage: review -n <advisor_name>");
+                    }
+                    continue;
                 }
                 "quit" | "exit" => std::process::exit(0),
                 _ => {
@@ -390,6 +459,7 @@ fn handle_red_phone_crisis(
             mole_mut.suspicion = 0;
             mole_mut.is_mole = false;
         }
+        engine.mole_neutralized = true;
     } else {
         println!(
             "{}VOICE: PREMIER CHERNOV HERE. WE SEE YOUR BOMBERS. EXPLAIN YOURSELF OR WE LAUNCH.{}",

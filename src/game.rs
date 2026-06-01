@@ -352,7 +352,10 @@ impl GameEngine {
                         // So we use index.
                         self.state.advisors[idx].suspicion = 100;
                         self.mole_incident_occurred = true;
-                        self.state.red_phone_active = true;
+                        if self.mole_silence_turns == 0 {
+                            self.mole_transmission_active = true;
+                            self.mole_transmission_target = self.state.advisors[idx].name.clone();
+                        }
                     } else {
                         feedback.push(format!(
                             ">> NO MATCH: {} DEVICE SIGNATURE IS CLEAN.",
@@ -382,14 +385,14 @@ impl GameEngine {
 
                 // Find Advisor
                 let target_lower = target.to_lowercase();
-                let advisor = self.state.advisors.iter().find(|a| {
+                let advisor_idx = self.state.advisors.iter().position(|a| {
                     a.name.to_lowercase().contains(&target_lower)
                         || format!("{:?}", a.role)
                             .to_lowercase()
                             .contains(&target_lower)
                 });
 
-                if let Some(adv) = advisor {
+                if let Some(idx) = advisor_idx {
                     let cost_msg = if self.consult_count > 1 {
                         "(INTEL COST: 1)"
                     } else {
@@ -397,13 +400,13 @@ impl GameEngine {
                     };
                     feedback.push(format!(
                         "CONSULTING WITH {}... {}",
-                        adv.name.to_uppercase(),
+                        self.state.advisors[idx].name.to_uppercase(),
                         cost_msg
                     ));
 
-                    let advice = if adv.is_mole {
+                    let advice = if self.state.advisors[idx].is_mole {
                         // Mole Logic: Mislead
-                        match adv.role {
+                        match self.state.advisors[idx].role {
                             AdvisorRole::General => {
                                 if self.state.global_tension > 0.7 {
                                     // Mole wants war: push for escalation when dangerous
@@ -433,7 +436,7 @@ impl GameEngine {
                         }
                     } else {
                         // Loyal Logic: Sound advice
-                        match adv.role {
+                        match self.state.advisors[idx].role {
                             AdvisorRole::General => {
                                 if self.state.global_tension > 0.8 {
                                     "Situation Critical. We must show resolve but avoid a first strike. (Recommend: CONTAIN)".to_string()
@@ -468,6 +471,7 @@ impl GameEngine {
                     };
 
                     feedback.push(format!("\"{}\"", advice));
+                    self.state.advisors[idx].advice_log.push((self.turn_count, advice.clone()));
                 } else {
                     feedback.push(format!("ERROR: ADVISOR '{}' NOT FOUND.", target));
                     // Refund if it cost anything (though we deducted already, so let's refund)
@@ -520,63 +524,64 @@ impl GameEngine {
                 });
 
                 if let Some(idx) = advisor_idx {
-                    let advisor = &mut self.state.advisors[idx];
-
                     // Unique Target Logic: Cannot interrogate same person twice in one turn
-                    if self.interrogated_advisors.contains(&advisor.name) {
+                    if self.interrogated_advisors.contains(&self.state.advisors[idx].name) {
                         feedback.push(format!(
                             "FAILURE: SUBJECT '{}' ALREADY QUESTIONED THIS CYCLE.",
-                            advisor.name
+                            self.state.advisors[idx].name
                         ));
                         return (feedback, false);
                     }
 
                     self.intel_points -= 2;
                     self.interrogations_this_turn += 1;
-                    self.interrogated_advisors.push(advisor.name.clone());
+                    self.interrogated_advisors.push(self.state.advisors[idx].name.clone());
 
                     feedback.push(format!(
                         "INTERROGATING SUBJECT: {}",
-                        advisor.name.to_uppercase()
+                        self.state.advisors[idx].name.to_uppercase()
                     ));
 
                     // Stress them out
-                    advisor.suspicion += 20;
+                    self.state.advisors[idx].suspicion += 20;
 
                     // The Response Logic
                     // 1. If Mole: 50% chance to slip up (Suspicious statement), 50% chance to frame someone else.
                     // 2. If Innocent: Becomes paranoid (increases Foreign Paranoia) or Defensive (Lowers Stability).
 
-                    if advisor.is_mole {
+                    if self.state.advisors[idx].is_mole {
                         if self.rng.random_bool(0.5) {
                             feedback.push(format!(
                                 ">> {}: \"You have no proof! The system is lying to you!\"",
-                                advisor.name
+                                self.state.advisors[idx].name
                             ));
                             feedback.push(
                                 "ANALYSIS: SUBJECT HEART RATE ELEVATED. DECEPTION INDICATED."
                                     .to_string(),
                             );
-                            advisor.suspicion += 15;
+                            self.state.advisors[idx].suspicion += 15;
                         } else {
                             // Frame someone random
-                            feedback.push(format!(">> {}: \"I am not the leak! Check the logs! It's clearly a setup!\"", advisor.name));
+                            feedback.push(format!(">> {}: \"I am not the leak! Check the logs! It's clearly a setup!\"", self.state.advisors[idx].name));
                             feedback.push("ANALYSIS: SUBJECT ATTEMPTS TO DEFLECT.".to_string());
                         }
                     } else {
-                        match advisor.role {
+                        match self.state.advisors[idx].role {
                             AdvisorRole::General => {
-                                feedback.push(format!(">> {}: \"How dare you question my loyalty! I have bled for this country!\"", advisor.name));
+                                let name = self.state.advisors[idx].name.clone();
+                                feedback.push(format!(">> {}: \"How dare you question my loyalty! I have bled for this country!\"", name));
                                 self.state.domestic_stability -= 0.05; // Army unhappy
                             }
                             AdvisorRole::Director => {
-                                feedback.push(format!(">> {}: \"This inquiry is unauthorized. You are making a mistake.\"", advisor.name));
+                                let name = self.state.advisors[idx].name.clone();
+                                feedback.push(format!(">> {}: \"This inquiry is unauthorized. You are making a mistake.\"", name));
                                 self.state.internal_secrecy -= 0.05; // Intel agency disrupted
                             }
                             AdvisorRole::Ambassador => {
+                                let name = self.state.advisors[idx].name.clone();
                                 feedback.push(format!(
                                     ">> {}: \"This is a witch hunt! We are losing credibility!\"",
-                                    advisor.name
+                                    name
                                 ));
                                 self.state.foreign_paranoia += 0.05; // Diplomat scares easily
                             }
@@ -585,16 +590,16 @@ impl GameEngine {
                             .push("ANALYSIS: SUBJECT APPEARS GENUINELY DISTRESSED.".to_string());
                     }
 
-                    if advisor.suspicion >= 100 {
+                    if self.state.advisors[idx].suspicion >= 100 {
                         feedback.push(format!(
                             "!!! SUSPICION CRITICAL: {} IDENTIFIED AS THREAT !!!",
-                            advisor.name.to_uppercase()
+                            self.state.advisors[idx].name.to_uppercase()
                         ));
-                        if advisor.is_mole {
-                            self.state.red_phone_active = true;
+                        if self.state.advisors[idx].is_mole && self.mole_silence_turns == 0 {
+                            self.mole_transmission_active = true;
+                            self.mole_transmission_target = self.state.advisors[idx].name.clone();
                         }
                     }
-                    // advisor borrow ends here; use idx to check suspicion threshold
                     if self.state.advisors[idx].suspicion > 50 {
                         self.mole_incident_occurred = true;
                     }
@@ -713,6 +718,7 @@ impl GameEngine {
                 feedback.push("The truth is out. The public riots, but they trust you more than the Generals.".to_string());
             }
             Directive::StandDown => {
+                self.standdown_triggered = true;
                 self.state.global_tension -= 0.4;
                 self.state.foreign_paranoia -= 0.3;
                 self.state.domestic_stability -= 0.35;
